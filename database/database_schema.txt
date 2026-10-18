@@ -8,10 +8,10 @@ Enum enum_film_type {
 }
 
 Enum enum_transaction_type {
-  PLANNED_EXPENSE [note: 'Планируемый расход. Δ кол-во обычно с минусом.']
+  CONSUMPTION [note: 'Планируемый расход. Δ кол-во обычно с минусом.']
   ADJUSTMENT [note: 'Корректировка. Любое изменение +/-.']
   PLANNED_RECEIPT [note: 'Планируемый приход. Δ кол-во с плюсом.']
-  ACTUAL_RECEIPT [note: 'Фактический приход. Δ кол-во с плюсом.']
+  RECEIPT [note: 'Фактический приход. Δ кол-во с плюсом.']
 }
 
 Table films {
@@ -70,7 +70,7 @@ Table planned_receipts {
   id int [primary key, increment]
   transaction_id int [ref: > transactions.id, not null, unique, note: 'Связь 1:1 с основной транзакцией']
   supplier_id int [ref: > suppliers.id, not null, note: 'Ссылка на поставщика']
-  date date [not null, note: 'Ожидаемая дата прихода']
+  planned_date date [not null, note: 'Ожидаемая дата прихода']
 
   Note: 'Детализация для транзакций типа Планируемый приход. Выполнение плана проверяется через таблицу receipts.'
 }
