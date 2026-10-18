@@ -1,0 +1,85 @@
+Enum enum_film_type {
+  BOPP [note: 'Прозрачный BOPP']
+  BOPP_PEARL [note: 'BOPP жемчужный (перламутровый)']
+  BOPP_METAL [note: 'BOPP металлизированный']
+  CPP [note: 'Каст-полипропилен']
+  LDPE_HALF_SLEEVE [note: 'ПВД полурукав']
+  LDPE_FLAT_SHEET [note: 'ПВД полотно']
+}
+
+Enum enum_transaction_type {
+  PLANNED_EXPENSE [note: 'Планируемый расход. Δ кол-во обычно с минусом.']
+  ADJUSTMENT [note: 'Корректировка. Любое изменение +/-.']
+  PLANNED_RECEIPT [note: 'Планируемый приход. Δ кол-во с плюсом.']
+  ACTUAL_RECEIPT [note: 'Фактический приход. Δ кол-во с плюсом.']
+}
+
+Table films {
+  id int [primary key, increment]
+  type enum_film_type [not null, note: 'Тип пленки']
+  brand varchar(255) [not null, note: 'Марка']
+  format int [not null, note: 'Ширина в мм']
+  thickness int [not null, note: 'Толщина в мкм']
+
+  indexes {
+    (type, brand, format, thickness) [unique, name: 'idx_film_unique_params']
+  }
+
+  Note: 'Справочник всех видов пленок на складе'
+}
+
+Table customers {
+  id int [primary key, increment]
+  name varchar(255) [not null, note: 'Название заказчика']
+  prod_card_number varchar(50) [not null, note: 'Номер производственной карты']
+
+  indexes {
+    (name, prod_card_number) [unique]
+  }
+
+  Note: 'Справочник заказчиков для планируемого расхода'
+}
+
+Table suppliers {
+  id int [primary key, increment]
+  name varchar(255) [not null, unique, note: 'Название поставщика']
+
+  Note: 'Справочник поставщиков пленки'
+}
+
+Table transactions {
+  id int [primary key, increment]
+  created_at datetime [not null, default: `now()`, note: 'Дата и время создания записи']
+  transaction_type enum_transaction_type [not null]
+
+  film_id int [ref: > films.id, not null, note: 'Ссылка на справочник пленок']
+  film_delta_kg decimal(10,2) [not null, note: 'Изменение количества (+/-) в кг']
+
+  Note: 'Основная таблица транзакций склада. Хранит все движения пленки.'
+}
+
+Table consumption {
+  id int [primary key, increment]
+  transaction_id int [ref: > transactions.id, not null, unique, note: 'Связь 1:1 с основной транзакцией']
+  customer_id int [ref: > customers.id, not null, note: 'Ссылка на заказчика']
+
+  Note: 'Детализация для транзакций типа Планируемый расход'
+}
+
+Table planned_receipts {
+  id int [primary key, increment]
+  transaction_id int [ref: > transactions.id, not null, unique, note: 'Связь 1:1 с основной транзакцией']
+  supplier_id int [ref: > suppliers.id, not null, note: 'Ссылка на поставщика']
+  date date [not null, note: 'Ожидаемая дата прихода']
+
+  Note: 'Детализация для транзакций типа Планируемый приход. Выполнение плана проверяется через таблицу receipts.'
+}
+
+Table receipts {
+  id int [primary key, increment]
+  transaction_id int [ref: > transactions.id, not null, unique, note: 'Связь 1:1 с основной транзакцией']
+  planned_receipt_id int [ref: > planned_receipts.id, not null, unique, note: 'Ссылка на план. NOT NULL запрещает приход без плана. UNIQUE запрещает принять один план дважды.']
+  actual_date date [not null, note: 'Фактическая дата прихода']
+
+  Note: 'Детализация для транзакций типа Фактический приход'
+}
