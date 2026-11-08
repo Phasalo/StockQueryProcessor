@@ -1,0 +1,13 @@
+{% macro header_field(name, label, options, selected) %}
+<div class="report-field">
+  <label for="{{ name }}">{{ label }}:</label>
+  <select id="{{ name }}" name="{{ name }}" class="form-select">
+    {% for value, text in options %}
+      <option value="{{ value }}" {% if value == selected %}selected{% endif %}>{{ text }}</option>
+    {% endfor %}
+    {% if selected not in (options|map(attribute=0)|list) %}
+      <option value="{{ selected }}" selected>{{ selected }}</option>
+    {% endif %}
+  </select>
+</div>
+{% endmacro %}

@@ -1,0 +1,6 @@
+{% macro data_block(block_title, block_body='') %}
+<section class="data-block">
+  {% if block_title %}<div>{{ block_title }}</div>{% endif %}
+  {% if block_body %}<div>{{ block_body }}</div>{% endif %}
+</section>
+{% endmacro %}

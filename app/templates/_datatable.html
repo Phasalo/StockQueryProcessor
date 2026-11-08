@@ -1,0 +1,24 @@
+{% macro datatable(table_id, columns, rows, empty_message='Нет записей', link_type=none) %}
+<div class="table-responsive">
+  <table id="{{ table_id }}" class="table table-hover w-100" data-report-table data-empty="{{ empty_message }}">
+    <thead><tr>{% for col in columns %}<th>{{ col.title }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for row in rows %}
+        <tr {% if link_type %}data-href="{{ url_for('ui.detail', raw=link_type, film_format=row.format, thickness=row.thickness) }}" tabindex="0" title="Открыть детализацию"{% endif %}>
+          {% for col in columns %}
+            {% set value = row.get(col.data) %}
+            {% set signed = table_id == 'transactions-table' and col.data == 'film_delta_kg' %}
+            <td data-order="{{ value|sort_value }}">
+              {% if signed and value %}
+                <span class="{{ 'text-success' if value > 0 else 'text-danger' }}">{{ value|report_value(col.formatter, signed=true) }}</span>
+              {% else %}
+                {{ value|report_value(col.formatter) }}
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endmacro %}
