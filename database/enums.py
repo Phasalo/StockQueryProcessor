@@ -23,7 +23,6 @@ class FilmType(Enum):
 class _TransactionTypeInfo:
     ru_name: str
     description: str
-    icon: str
     can_be_positive: bool
     can_be_negative: bool
 
@@ -32,23 +31,20 @@ class TransactionType(Enum):
     CONSUMPTION = _TransactionTypeInfo(
         ru_name="Планируемый расход",
         description="Уменьшение количества (-)",
-        icon="📉",
         can_be_positive=False,
         can_be_negative=True
     )
 
     ADJUSTMENT = _TransactionTypeInfo(
         ru_name="Корректировка",
-        description = "Любое изменение количества (+/-)",
-        icon="⚖️",
+        description="Любое изменение количества (+/-)",
         can_be_positive=True,
         can_be_negative=True
     )
 
     PLANNED_RECEIPT = _TransactionTypeInfo(
         ru_name="Планируемый приход",
-        description="(+) Увеличение количества (+)",
-        icon="📅",
+        description="Увеличение количества (+)",
         can_be_positive=True,
         can_be_negative=False
     )
@@ -56,7 +52,6 @@ class TransactionType(Enum):
     RECEIPT = _TransactionTypeInfo(
         ru_name="Фактический приход",
         description="Увеличение количества (+)",
-        icon="✅",
         can_be_positive=True,
         can_be_negative=False
     )

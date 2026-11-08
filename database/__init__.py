@@ -9,18 +9,16 @@ from config import WarehouseConfig
 from database.enums import FilmType, TransactionType
 
 
-def _escape_sql(value: str) -> str:
-    return str(value).replace("'", "''")
-
-
-def _sql_join(values: list[str]) -> str:
-    return ", ".join(f"'{_escape_sql(v)}'" for v in values)
-
-
 class Warehouse:
     def __init__(self, config: WarehouseConfig):
         self._dsn = f"postgresql://{config.user}:{config.password}@{config.host}:{config.port}/{config.database}"
         self._create_tables()
+
+    @staticmethod
+    def _sql_join(values: list[str]) -> str:
+        def _escape_sql(value: str) -> str:
+            return str(value).replace("'", "''")
+        return ", ".join(f"'{_escape_sql(v)}'" for v in values)
 
     def _create_tables(self) -> None:
         with closing(psycopg2.connect(self._dsn)) as conn, conn:
@@ -29,7 +27,7 @@ class Warehouse:
                     DO $$
                     BEGIN
                         CREATE TYPE {FilmType.get_sql_name()} 
-                        AS ENUM ({_sql_join(FilmType.get_values())});
+                        AS ENUM ({self._sql_join(FilmType.get_values())});
                     EXCEPTION
                         WHEN duplicate_object THEN NULL;
                     END $$;
