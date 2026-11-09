@@ -22,15 +22,16 @@ def transactions():
     rows = reports.get_all_transactions()
     for row in rows:
         kind = row["transaction_type"]
-        consumption = kind == TransactionType.CONSUMPTION
+        consumption = kind in (TransactionType.CONSUMPTION, TransactionType.ISSUE)
         receipt = kind in (TransactionType.RECEIPT, TransactionType.PLANNED_RECEIPT)
+        film = row["film_type"]
         row.update(
             transaction_label=kind.value.ru_name,
-            film_label=row["film_type"].value,
+            film_label=row.get("film_type_name", film.value if isinstance(film, FilmType) else film),
             counterparty=row.get("customer_name") if consumption else row.get("supplier_name") if receipt else None,
             card=row.get("customer_prod_card_number") if consumption else None,
             visible_planned_date=row.get("planned_date") if receipt else None,
-            visible_actual_date=row.get("actual_date") if kind == TransactionType.RECEIPT else None,
+            visible_actual_date=row.get("actual_date") if kind in (TransactionType.RECEIPT, TransactionType.ISSUE) else None,
         )
     return rows
 

@@ -170,6 +170,10 @@ class InterfaceTest(unittest.TestCase):
         self.assertEqual(sheet["H5"].value, "Поставщик")
         self.assertEqual(sheet["K5"].value, "—")
         self.assertEqual(sheet["K6"].value, "06.11.2026")
+        self.assertEqual(sheet["H7"].value, "Заказчик")
+        self.assertEqual(sheet["I7"].value, "001")
+        self.assertEqual(sheet["J7"].value, "—")
+        self.assertEqual(sheet["K7"].value, "06.11.2026")
 
     def test_empty_exports(self):
         with patch.object(reports, "get_all_transactions", return_value=[]):

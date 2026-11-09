@@ -1,14 +1,17 @@
 from contextlib import closing
 
 import psycopg2
-from pypika import Table, Case, Order, PostgreSQLQuery, functions, Parameter
+from pypika import Table, Case, PostgreSQLQuery, functions, Parameter
 
 from config import WarehouseConfig
 from database import TransactionType, FilmType
+from database.repositories.reports import ReportRepository
+from database.unit_of_work import UnitOfWork
 
 
 class WarehouseReports:
     def __init__(self, config: WarehouseConfig):
+        self._config = config
         self._dsn = f"postgresql://{config.user}:{config.password}@{config.host}:{config.port}/{config.database}"
 
     def get_film_type_summary(self, film_type: FilmType) -> list[dict]:
@@ -232,67 +235,28 @@ class WarehouseReports:
         ]
 
     def get_all_transactions(self) -> list[dict]:
-        t = Table("transactions")
-        f = Table("films")
-        co = Table("consumption")
-        c = Table("customers")
-        pr_plan = Table("planned_receipts").as_("pr_plan")
-        sup_plan = Table("suppliers").as_("sup_plan")
-        r = Table("receipts")
-        pr_receipt = Table("planned_receipts").as_("pr_receipt")
-        sup_receipt = Table("suppliers").as_("sup_receipt")
-
-        q = (
-            PostgreSQLQuery.from_(t)
-                .join(f).on(f.id == t.film_id)
-                .left_join(co).on(co.transaction_id == t.id)
-                .left_join(c).on(c.id == co.customer_id)
-                .left_join(pr_plan).on(pr_plan.transaction_id == t.id)
-                .left_join(sup_plan).on(sup_plan.id == pr_plan.supplier_id)
-                .left_join(r).on(r.transaction_id == t.id)
-                .left_join(pr_receipt).on(pr_receipt.id == r.planned_receipt_id)
-                .left_join(sup_receipt).on(sup_receipt.id == pr_receipt.supplier_id)
-                .select(
-                t.id,
-                t.created_at,
-                t.transaction_type,
-                f.type,
-                f.brand,
-                f.format,
-                f.thickness,
-                t.film_delta_kg,
-                c.name.as_("customer_name"),
-                c.prod_card_number.as_("customer_prod_card_number"),
-                functions.Coalesce(sup_plan.name, sup_receipt.name).as_("supplier_name"),
-                functions.Coalesce(pr_plan.planned_date, pr_receipt.planned_date).as_("planned_date"),
-                r.actual_date,
-            )
-                .orderby(t.created_at, order=Order.desc)
-                .orderby(t.id, order=Order.desc)
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q))
-                rows = cur.fetchall()
-
+        with UnitOfWork(self._config) as uow:
+            records = ReportRepository(uow.connection).list_transactions()
         return [
             {
-                "id": row[0],
-                "created_at": row[1],
-                "transaction_type": TransactionType[row[2]],
-                "film_type": FilmType[row[3]],
-                "film_brand": row[4],
-                "film_format": row[5],
-                "film_thickness": row[6],
-                "film_delta_kg": row[7],
-                "customer_name": row[8],
-                "customer_prod_card_number": row[9],
-                "supplier_name": row[10],
-                "planned_date": row[11],
-                "actual_date": row[12],
+                "id": row.transaction_id,
+                "created_at": row.created_at,
+                "transaction_type": TransactionType[row.transaction_type],
+                "material_id": row.material_id,
+                "film_type": FilmType.__members__.get(row.film_type_code, row.film_type_code),
+                "film_type_name": row.film_type_name,
+                "film_brand": row.brand,
+                "film_format": row.format,
+                "film_thickness": row.thickness,
+                "film_delta_kg": row.quantity_delta_kg,
+                "customer_name": row.customer_name,
+                "customer_prod_card_number": row.customer_prod_card_number,
+                "supplier_name": row.supplier_name,
+                "order_date": row.order_date,
+                "planned_date": row.planned_date,
+                "actual_date": row.actual_date,
             }
-            for row in rows
+            for row in records
         ]
 
     def get_available_formats(self, film_type: FilmType) -> list[int]:
