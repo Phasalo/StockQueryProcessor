@@ -8,7 +8,7 @@ from database import Warehouse
 class WarehouseInitializationTest(unittest.TestCase):
     def test_constructor_does_not_connect_or_create_schema(self):
         with patch(
-            "database.psycopg2.connect",
+            "database.unit_of_work.create_connection",
             side_effect=AssertionError("Warehouse must not connect during initialization"),
         ) as connect:
             Warehouse(WarehouseConfig())

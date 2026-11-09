@@ -1,10 +1,6 @@
-from contextlib import closing
 from dataclasses import asdict
 from datetime import date
 from decimal import Decimal
-
-import psycopg2
-from pypika import Table, Parameter, PostgreSQLQuery
 
 from config import WarehouseConfig
 from database.enums import FilmType, TransactionType
@@ -12,15 +8,16 @@ from database.repositories.catalog import (
     CustomerRepository, FilmTypeRepository, MaterialRecord, MaterialRepository,
     SupplierRepository,
 )
+from database.repositories.locks import lock_material
 from database.repositories.movements import MovementRepository
 from database.repositories.plans import PlanCancellationRecord, PlanRecord, PlanRepository
+from database.repositories.transactions import TransactionRepository, validate_quantity
 from database.unit_of_work import UnitOfWork
 
 
 class Warehouse:
     def __init__(self, config: WarehouseConfig):
         self._config = config
-        self._dsn = f"postgresql://{config.user}:{config.password}@{config.host}:{config.port}/{config.database}"
 
     def add_film(
         self, film_type: FilmType | str, brand: str, film_format: int, thickness: int,
@@ -124,22 +121,6 @@ class Warehouse:
             supplier = SupplierRepository(uow.connection).get(supplier_id)
         return asdict(supplier) if supplier else None
 
-    @staticmethod
-    def _validate_delta(delta: Decimal, tt: TransactionType) -> None:
-        info = tt.value
-        if delta == 0:
-            raise ValueError(
-                f"Для типа '{info.ru_name}' delta_kg не может быть равен 0."
-            )
-        if delta > 0 and not info.can_be_positive:
-            raise ValueError(
-                f"Для типа '{info.ru_name}' delta_kg не может быть положительным."
-            )
-        if delta < 0 and not info.can_be_negative:
-            raise ValueError(
-                f"Для типа '{info.ru_name}' delta_kg не может быть отрицательным."
-            )
-
     def create_consumption(self, film_id: int, customer_id: int, delta_kg: Decimal) -> int:
         """Возвращает ID журнала; ID плана доступен через PlanRepository."""
         with UnitOfWork(self._config) as uow:
@@ -147,23 +128,13 @@ class Warehouse:
         return plan.transaction_id
 
     def create_adjustment(self, film_id: int, delta_kg: Decimal) -> int:
-        tt = TransactionType.ADJUSTMENT
-        self._validate_delta(delta_kg, tt)
-
-        transactions = Table("transactions")
-        q_tx = (
-            PostgreSQLQuery.into(transactions)
-                .columns("transaction_type", "film_id", "film_delta_kg")
-                .insert(Parameter("%s"), Parameter("%s"), Parameter("%s"))
-                .returning("id")
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q_tx), (tt.name, film_id, delta_kg))
-                tx_id = cur.fetchone()[0]
-
-        return tx_id
+        validate_quantity(delta_kg)
+        with UnitOfWork(self._config) as uow:
+            lock_material(uow.connection, film_id)
+            transaction = TransactionRepository(uow.connection).add(
+                TransactionType.ADJUSTMENT, film_id, delta_kg,
+            )
+        return transaction.id
 
     def create_planned_receipt(
         self, film_id: int, supplier_id: int, planned_date: date, delta_kg: Decimal,

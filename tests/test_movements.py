@@ -9,6 +9,7 @@ import subprocess
 import sys
 from threading import Barrier
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 import psycopg2
@@ -124,6 +125,78 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
                 movement_id = cursor.fetchone()[0]
             movements = MovementRepository(uow.connection)
             return movements.get_receipt(movement_id) if kind == "receipt" else movements.get_issue(movement_id)
+
+    def test_facade_adjustments_store_signed_deltas_and_allow_negative_balance(self):
+        warehouse = Warehouse(self.config)
+        positive_id = warehouse.create_adjustment(self.material_id, Decimal("10"))
+        negative_id = warehouse.create_adjustment(self.material_id, Decimal("-25"))
+        self.assertNotEqual(positive_id, negative_id)
+        with UnitOfWork(self.config) as uow:
+            journal = TransactionRepository(uow.connection)
+            positive = journal.get(positive_id)
+            negative = journal.get(negative_id)
+            self.assertEqual(positive.transaction_type, "ADJUSTMENT")
+            self.assertEqual(negative.transaction_type, "ADJUSTMENT")
+            self.assertEqual(positive.material_id, self.material_id)
+            self.assertEqual(negative.material_id, self.material_id)
+            self.assertEqual(positive.quantity_delta_kg, Decimal("10"))
+            self.assertEqual(negative.quantity_delta_kg, Decimal("-25"))
+            with uow.connection.cursor() as cursor:
+                cursor.execute("SELECT sum(quantity_delta_kg) FROM transactions")
+                self.assertEqual(cursor.fetchone()[0], Decimal("-15"))
+        self.assertEqual(self.count_rows("receipts"), 0)
+        self.assertEqual(self.count_rows("issues"), 0)
+
+    def test_facade_adjustment_does_not_change_plans_or_cancellations(self):
+        receipt_plan = self.create_plan("receipt")
+        issue_plan = self.create_plan("issue")
+        warehouse = Warehouse(self.config)
+        warehouse.cancel_plan(receipt_plan.transaction_id, Decimal("10"), "Partial")
+        with UnitOfWork(self.config) as uow:
+            plans = PlanRepository(uow.connection)
+            expected_receipt = plans.get_receipt(receipt_plan.id)
+            expected_issue = plans.get_consumption(issue_plan.id)
+        warehouse.create_adjustment(self.material_id, Decimal("5"))
+        warehouse.create_adjustment(self.material_id, Decimal("-7"))
+        with UnitOfWork(self.config) as uow:
+            plans = PlanRepository(uow.connection)
+            self.assertEqual(plans.get_receipt(receipt_plan.id), expected_receipt)
+            self.assertEqual(plans.get_consumption(issue_plan.id), expected_issue)
+        self.assertEqual(self.count_rows("plan_cancellations"), 1)
+        self.assertEqual(self.count_rows("transactions"), 4)
+
+    def test_facade_adjustment_rejects_invalid_quantities_without_rounding(self):
+        cases = (
+            (Decimal("0"), ValueError), (Decimal("NaN"), ValueError),
+            (Decimal("Infinity"), ValueError), (Decimal("100000000"), ValueError),
+            (Decimal("-100000000"), ValueError), (Decimal("1.001"), ValueError),
+            (1.1, TypeError), ("10", TypeError),
+        )
+        for quantity, error in cases:
+            with self.subTest(quantity=quantity):
+                with self.assertRaises(error):
+                    Warehouse(self.config).create_adjustment(self.material_id, quantity)
+        self.assertEqual(self.count_rows("transactions"), 0)
+
+    def test_facade_adjustment_requires_existing_material(self):
+        with self.assertRaisesRegex(ValueError, "не найден"):
+            Warehouse(self.config).create_adjustment(999999, Decimal("10"))
+        self.assertEqual(self.count_rows("transactions"), 0)
+
+    def test_facade_adjustment_obeys_material_lock(self):
+        def open_with_timeout(config):
+            connection = create_connection(config)
+            with connection.cursor() as cursor:
+                cursor.execute("SET lock_timeout = '100ms'")
+            return connection
+
+        with UnitOfWork(self.config) as holder:
+            with holder.connection.cursor() as cursor:
+                cursor.execute("SELECT id FROM materials WHERE id = %s FOR UPDATE", (self.material_id,))
+            with patch("database.unit_of_work.create_connection", side_effect=open_with_timeout):
+                with self.assertRaises(psycopg2.errors.LockNotAvailable):
+                    Warehouse(self.config).create_adjustment(self.material_id, Decimal("10"))
+        self.assertEqual(self.count_rows("transactions"), 0)
 
     def test_facade_receipt_preserves_positional_arguments_and_uses_plan_supplier(self):
         with UnitOfWork(self.config) as uow:
