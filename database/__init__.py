@@ -12,6 +12,7 @@ from database.repositories.catalog import (
     CustomerRepository, FilmTypeRepository, MaterialRecord, MaterialRepository,
     SupplierRepository,
 )
+from database.repositories.plans import PlanCancellationRecord, PlanRecord, PlanRepository
 from database.unit_of_work import UnitOfWork
 
 
@@ -142,31 +143,11 @@ class Warehouse:
             )
 
     def create_consumption(self, film_id: int, customer_id: int, delta_kg: Decimal) -> int:
-        tt = TransactionType.CONSUMPTION
-        self._validate_delta(delta_kg, tt)
-
-        transactions = Table("transactions")
-        consumption = Table("consumption")
-
-        q_tx = (
-            PostgreSQLQuery.into(transactions)
-                .columns("transaction_type", "film_id", "film_delta_kg")
-                .insert(Parameter("%s"), Parameter("%s"), Parameter("%s"))
-                .returning("id")
-        )
-        q_c = (
-            PostgreSQLQuery.into(consumption)
-                .columns("transaction_id", "customer_id")
-                .insert(Parameter("%s"), Parameter("%s"))
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q_tx), (tt.name, film_id, delta_kg))
-                tx_id = cur.fetchone()[0]
-                cur.execute(str(q_c), (tx_id, customer_id))
-
-        return tx_id
+        """Возвращает ID журнала; ID плана доступен через PlanRepository."""
+        with UnitOfWork(self._config) as uow:
+            plan = PlanRepository(uow.connection).add_consumption(film_id, customer_id, delta_kg)
+            uow.commit()
+        return plan.transaction_id
 
     def create_adjustment(self, film_id: int, delta_kg: Decimal) -> int:
         tt = TransactionType.ADJUSTMENT
@@ -187,117 +168,53 @@ class Warehouse:
 
         return tx_id
 
-    def create_planned_receipt(self, film_id: int, supplier_id: int, planned_date: date, delta_kg: Decimal) -> int:
-        tt = TransactionType.PLANNED_RECEIPT
-        self._validate_delta(delta_kg, tt)
-
-        transactions = Table("transactions")
-        planned_receipts = Table("planned_receipts")
-
-        q_tx = (
-            PostgreSQLQuery.into(transactions)
-                .columns("transaction_type", "film_id", "film_delta_kg")
-                .insert(Parameter("%s"), Parameter("%s"), Parameter("%s"))
-                .returning("id")
-        )
-        q_pr = (
-            PostgreSQLQuery.into(planned_receipts)
-                .columns("transaction_id", "supplier_id", "planned_date")
-                .insert(Parameter("%s"), Parameter("%s"), Parameter("%s"))
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q_tx), (tt.name, film_id, delta_kg))
-                tx_id = cur.fetchone()[0]
-                cur.execute(str(q_pr), (tx_id, supplier_id, planned_date))
-
-        return tx_id
-
-    def find_open_planned_receipts(self, film_id: int | None = None, supplier_id: int | None = None, limit: int = 10) -> list[dict]:
-        planned_receipts = Table("planned_receipts")
-        transactions = Table("transactions")
-        receipts = Table("receipts")
-
-        q = (
-            PostgreSQLQuery.from_(planned_receipts)
-                .join(transactions)
-                .on(planned_receipts.transaction_id == transactions.id)
-                .left_join(receipts)
-                .on(receipts.planned_receipt_id == planned_receipts.id)
-                .select(
-                planned_receipts.id,
-                transactions.film_id,
-                planned_receipts.supplier_id,
-                planned_receipts.planned_date,
-                transactions.film_delta_kg,
+    def create_planned_receipt(
+        self, film_id: int, supplier_id: int, planned_date: date, delta_kg: Decimal,
+        *, order_date: date,
+    ) -> int:
+        """Возвращает ID журнала; ID плана доступен через PlanRepository."""
+        with UnitOfWork(self._config) as uow:
+            plan = PlanRepository(uow.connection).add_receipt(
+                film_id, supplier_id, order_date, planned_date, delta_kg,
             )
-                .where(receipts.id.isnull())
-        )
+            uow.commit()
+        return plan.transaction_id
 
-        params: list = []
-        if film_id is not None:
-            q = q.where(transactions.film_id == Parameter("%s"))
-            params.append(film_id)
-        if supplier_id is not None:
-            q = q.where(planned_receipts.supplier_id == Parameter("%s"))
-            params.append(supplier_id)
-
-        q = q.order_by(planned_receipts.id).limit(limit)
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), tuple(params))
-                rows = cur.fetchall()
-
-        return [
-            {
-                "id": r[0],
-                "film_id": r[1],
-                "supplier_id": r[2],
-                "planned_date": r[3],
-                "delta_kg": r[4],
-            }
-            for r in rows
-        ]
+    def find_open_planned_receipts(
+        self, film_id: int | None = None, supplier_id: int | None = None, limit: int = 10,
+    ) -> list[dict]:
+        with UnitOfWork(self._config) as uow:
+            plans = PlanRepository(uow.connection).find_open_receipts(film_id, supplier_id, limit)
+        return [self._planned_receipt_result(plan) for plan in plans]
 
     def get_planned_receipt(self, planned_receipt_id: int) -> dict | None:
-        planned_receipts = Table("planned_receipts")
-        transactions = Table("transactions")
-        receipts = Table("receipts")
+        with UnitOfWork(self._config) as uow:
+            plan = PlanRepository(uow.connection).get_receipt(planned_receipt_id)
+        return self._planned_receipt_result(plan) if plan else None
 
-        q = (
-            PostgreSQLQuery.from_(planned_receipts)
-                .join(transactions)
-                .on(planned_receipts.transaction_id == transactions.id)
-                .left_join(receipts)
-                .on(receipts.planned_receipt_id == planned_receipts.id)
-                .select(
-                planned_receipts.id,
-                transactions.film_id,
-                planned_receipts.supplier_id,
-                planned_receipts.planned_date,
-                transactions.film_delta_kg,
-                receipts.id,
+    def cancel_plan(
+        self, plan_transaction_id: int, quantity_kg: Decimal, reason: str,
+    ) -> PlanCancellationRecord:
+        with UnitOfWork(self._config) as uow:
+            cancellation = PlanRepository(uow.connection).cancel(
+                plan_transaction_id, quantity_kg, reason,
             )
-                .where(planned_receipts.id == Parameter("%s"))
-                .limit(1)
-        )
+            uow.commit()
+        return cancellation
 
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (planned_receipt_id,))
-                r = cur.fetchone()
-
-        if r is None:
-            return None
+    @staticmethod
+    def _planned_receipt_result(plan: PlanRecord) -> dict:
         return {
-            "id": r[0],
-            "film_id": r[1],
-            "supplier_id": r[2],
-            "planned_date": r[3],
-            "delta_kg": r[4],
-            "is_closed": r[5] is not None,
+            "id": plan.id,
+            "transaction_id": plan.transaction_id,
+            "film_id": plan.material_id,
+            "supplier_id": plan.supplier_id,
+            "order_date": plan.order_date,
+            "planned_date": plan.planned_date,
+            "delta_kg": plan.quantity_delta_kg,
+            "cancelled_quantity_kg": plan.cancelled_quantity_kg,
+            "remaining_quantity_kg": plan.remaining_quantity_kg,
+            "is_closed": plan.is_closed,
         }
 
     def create_receipt(self, film_id: int, planned_receipt_id: int, actual_date: date, delta_kg: Decimal) -> int:

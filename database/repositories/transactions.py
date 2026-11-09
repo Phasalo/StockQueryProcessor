@@ -27,7 +27,7 @@ class TransactionRepository:
         material_id: int,
         quantity_delta_kg: Decimal,
     ) -> TransactionRecord:
-        self._validate_quantity(quantity_delta_kg)
+        validate_quantity(quantity_delta_kg)
         code = (
             transaction_type.name
             if isinstance(transaction_type, TransactionType)
@@ -61,14 +61,14 @@ class TransactionRepository:
             row = cursor.fetchone()
         return TransactionRecord(*row) if row else None
 
-    @staticmethod
-    def _validate_quantity(value: Decimal) -> None:
-        if not isinstance(value, Decimal):
-            raise TypeError("quantity_delta_kg должен быть Decimal.")
-        if not value.is_finite() or value == 0:
-            raise ValueError("quantity_delta_kg должен быть конечным ненулевым числом.")
-        if value.copy_abs() > Decimal("99999999.99"):
-            raise ValueError("quantity_delta_kg не помещается в decimal(10,2).")
-        with localcontext(Context(prec=10)):
-            if value.quantize(Decimal("0.01")) != value:
-                raise ValueError("quantity_delta_kg допускает не более двух знаков после запятой.")
+
+def validate_quantity(value: Decimal) -> None:
+    if not isinstance(value, Decimal):
+        raise TypeError("Количество должно быть Decimal.")
+    if not value.is_finite() or value == 0:
+        raise ValueError("Количество должно быть конечным ненулевым числом.")
+    if value.copy_abs() > Decimal("99999999.99"):
+        raise ValueError("Количество не помещается в decimal(10,2).")
+    with localcontext(Context(prec=10)):
+        if value.quantize(Decimal("0.01")) != value:
+            raise ValueError("Количество допускает не более двух знаков после запятой.")
