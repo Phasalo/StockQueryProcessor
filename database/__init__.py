@@ -7,96 +7,77 @@ from pypika import Table, Parameter, PostgreSQLQuery
 
 from config import WarehouseConfig
 from database.enums import FilmType, TransactionType
+from database.repositories.catalog import FilmTypeRepository, MaterialRecord, MaterialRepository
+from database.unit_of_work import UnitOfWork
 
 
 class Warehouse:
     def __init__(self, config: WarehouseConfig):
+        self._config = config
         self._dsn = f"postgresql://{config.user}:{config.password}@{config.host}:{config.port}/{config.database}"
 
-    def add_film(self, film_type: FilmType, brand: str, film_format: int, thickness: int) -> int:
-        films = Table("films")
-        q = (
-            PostgreSQLQuery.into(films)
-                .columns("type", "brand", "format", "thickness")
-                .insert(Parameter("%s"), Parameter("%s"), Parameter("%s"), Parameter("%s"))
-                .returning("id")
-        )
+    def add_film(
+        self, film_type: FilmType | str, brand: str, film_format: int, thickness: int,
+    ) -> int:
+        code = film_type.name if isinstance(film_type, FilmType) else film_type
+        with UnitOfWork(self._config) as uow:
+            record = FilmTypeRepository(uow.connection).find_by_code(code)
+            if record is None:
+                raise ValueError(f"Неизвестный тип плёнки: {code}.")
+            material_id = MaterialRepository(uow.connection).add(
+                record.id, brand, film_format, thickness,
+            )
+            uow.commit()
+        return material_id
 
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (film_type.name, brand, film_format, thickness))
-                film_id = cur.fetchone()[0]
+    def find_film(
+        self, film_type: FilmType | str, brand: str, film_format: int, thickness: int,
+    ) -> int | None:
+        code = film_type.name if isinstance(film_type, FilmType) else film_type
+        with UnitOfWork(self._config) as uow:
+            record = FilmTypeRepository(uow.connection).find_by_code(code)
+            if record is None:
+                return None
+            material = MaterialRepository(uow.connection).find(
+                record.id, brand, film_format, thickness,
+            )
+        return material.id if material else None
 
-        return film_id
-
-    def find_film(self, film_type: FilmType, brand: str, film_format: int, thickness: int) -> int | None:
-        films = Table("films")
-        q = (
-            PostgreSQLQuery.from_(films)
-                .select(films.id)
-                .where(films.type == Parameter("%s"))
-                .where(films.brand == Parameter("%s"))
-                .where(films.format == Parameter("%s"))
-                .where(films.thickness == Parameter("%s"))
-                .limit(1)
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (film_type.name, brand, film_format, thickness))
-                row = cur.fetchone()
-
-        return row[0] if row else None
-
-    def search_films(self, film_type=None, brand=None, film_format=None, thickness=None, limit=10) -> list[dict]:
-        films = Table("films")
-        q = PostgreSQLQuery.from_(films).select(
-            films.id, films.type, films.brand, films.format, films.thickness
-        )
-        params: list = []
-
-        if film_type is not None:
-            q = q.where(films.type == Parameter("%s"))
-            params.append(film_type.name)
-        if brand:
-            q = q.where(films.brand.ilike(Parameter("%s")))
-            params.append(f"%{brand}%")
-        if film_format is not None:
-            q = q.where(films.format == Parameter("%s"))
-            params.append(film_format)
-        if thickness is not None:
-            q = q.where(films.thickness == Parameter("%s"))
-            params.append(thickness)
-
-        q = q.order_by(films.id).limit(limit)
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), tuple(params))
-                rows = cur.fetchall()
-
-        return [
-            {"id": r[0], "type": r[1], "brand": r[2], "format": r[3], "thickness": r[4]}
-            for r in rows
-        ]
+    def search_films(
+        self,
+        film_type: FilmType | str | None = None,
+        brand: str | None = None,
+        film_format: int | None = None,
+        thickness: int | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        with UnitOfWork(self._config) as uow:
+            film_type_id = None
+            if film_type is not None:
+                code = film_type.name if isinstance(film_type, FilmType) else film_type
+                record = FilmTypeRepository(uow.connection).find_by_code(code)
+                if record is None:
+                    return []
+                film_type_id = record.id
+            materials = MaterialRepository(uow.connection).search(
+                film_type_id, brand, film_format, thickness, limit,
+            )
+        return [self._film_result(material) for material in materials]
 
     def get_film(self, film_id: int) -> dict | None:
-        films = Table("films")
-        q = (
-            PostgreSQLQuery.from_(films)
-                .select(films.id, films.type, films.brand, films.format, films.thickness)
-                .where(films.id == Parameter("%s"))
-                .limit(1)
-        )
+        with UnitOfWork(self._config) as uow:
+            material = MaterialRepository(uow.connection).get(film_id)
+        return self._film_result(material) if material else None
 
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (film_id,))
-                r = cur.fetchone()
-
-        if r is None:
-            return None
-        return {"id": r[0], "type": r[1], "brand": r[2], "format": r[3], "thickness": r[4]}
+    @staticmethod
+    def _film_result(material: MaterialRecord) -> dict:
+        return {
+            "id": material.id,
+            "type": material.film_type_code,
+            "brand": material.brand,
+            "format": material.format,
+            "thickness": material.thickness,
+        }
 
     def add_customer(self, name: str, prod_card_number: str) -> int:
         customers = Table("customers")
