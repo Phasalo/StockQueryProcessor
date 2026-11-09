@@ -9,6 +9,7 @@ from semantic_entry.core.contracts import (
     PreparationResult,
 )
 from semantic_entry.core.preparation import CommandPreparer
+from semantic_entry.core.queries import QueryExecutor
 from semantic_entry.core.registry import CommandRegistry
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "FieldError",
     "PermissionDeniedError",
     "PreparationResult",
+    "QueryExecutor",
 ]
