@@ -1,3 +1,7 @@
-from database.repositories.catalog import FilmTypeRepository, MaterialRepository
+from database.repositories.catalog import (
+    CustomerRepository, FilmTypeRepository, MaterialRepository, SupplierRepository,
+)
 
-__all__ = ["FilmTypeRepository", "MaterialRepository"]
+__all__ = [
+    "CustomerRepository", "FilmTypeRepository", "MaterialRepository", "SupplierRepository",
+]

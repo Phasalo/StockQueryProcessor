@@ -15,7 +15,9 @@ from config import WarehouseConfig
 from database import FilmType, Warehouse
 from database.connection import create_connection
 from database.repositories.catalog import (
+    CustomerRecord, CustomerRepository,
     FilmTypeRecord, FilmTypeRepository, MaterialRecord, MaterialRepository,
+    SupplierRecord, SupplierRepository,
 )
 from database.unit_of_work import UnitOfWork
 
@@ -67,7 +69,10 @@ class CatalogPostgresTest(unittest.TestCase):
     def setUp(self):
         with UnitOfWork(self.config) as uow:
             with uow.connection.cursor() as cursor:
-                cursor.execute("TRUNCATE materials, film_types RESTART IDENTITY CASCADE")
+                cursor.execute(
+                    "TRUNCATE materials, film_types, customers, suppliers "
+                    "RESTART IDENTITY CASCADE"
+                )
             types = FilmTypeRepository(uow.connection)
             self.bopp = types.add("BOPP", "Прозрачный BOPP")
             self.cpp = types.add("CPP", "Каст-полипропилен")
@@ -218,6 +223,132 @@ class CatalogPostgresTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "MISSING"):
             self.warehouse.add_film("MISSING", "Brand", 1200, 25)
         self.assertEqual(len(self.warehouse.search_films()), 1)
+
+    def test_customer_record_preserves_card_number_as_text(self):
+        with UnitOfWork(self.config) as uow:
+            customers = CustomerRepository(uow.connection)
+            customer_id = customers.add("Заказчик", "000123")
+            expected = CustomerRecord(customer_id, "Заказчик", "000123")
+            self.assertEqual(customers.get(customer_id), expected)
+            self.assertEqual(customers.find("Заказчик", "000123"), expected)
+            self.assertIsNone(customers.find("Заказчик", "123"))
+            self.assertIsNone(customers.get(999999))
+            self.assertIsNone(customers.find("Missing", "000123"))
+            uow.commit()
+        with UnitOfWork(self.config) as uow:
+            self.assertEqual(CustomerRepository(uow.connection).get(customer_id), expected)
+
+    def test_customer_uniqueness_uses_name_and_card(self):
+        first = self.warehouse.add_customer("Company", "001")
+        second = self.warehouse.add_customer("Company", "002")
+        self.assertNotEqual(first, second)
+        with self.assertRaises(psycopg2.errors.UniqueViolation):
+            with UnitOfWork(self.config) as uow:
+                CustomerRepository(uow.connection).add("Company", "001")
+        self.assertEqual(len(self.warehouse.search_customers("Company")), 2)
+
+    def test_supplier_records_and_missing_values(self):
+        with UnitOfWork(self.config) as uow:
+            suppliers = SupplierRepository(uow.connection)
+            supplier_id = suppliers.add("Поставщик")
+            expected = SupplierRecord(supplier_id, "Поставщик")
+            self.assertEqual(suppliers.get(supplier_id), expected)
+            self.assertEqual(suppliers.find("Поставщик"), expected)
+            self.assertIsNone(suppliers.get(999999))
+            self.assertIsNone(suppliers.find("Missing"))
+            uow.commit()
+        with UnitOfWork(self.config) as uow:
+            self.assertEqual(SupplierRepository(uow.connection).get(supplier_id), expected)
+
+    def test_customer_and_supplier_share_one_transaction(self):
+        with UnitOfWork(self.config) as uow:
+            customers = CustomerRepository(uow.connection)
+            suppliers = SupplierRepository(uow.connection)
+            customer_id = customers.add("Customer", "001")
+            supplier_id = suppliers.add("Supplier")
+            self.assertIsNotNone(customers.get(customer_id))
+            self.assertIsNotNone(suppliers.get(supplier_id))
+            with UnitOfWork(self.config) as other:
+                self.assertEqual(CustomerRepository(other.connection).search(""), [])
+                self.assertEqual(SupplierRepository(other.connection).search(""), [])
+            uow.commit()
+        self.assertIsNotNone(self.warehouse.get_customer(customer_id))
+        self.assertIsNotNone(self.warehouse.get_supplier(supplier_id))
+
+    def test_party_repositories_do_not_commit_implicitly(self):
+        with UnitOfWork(self.config) as uow:
+            customers = CustomerRepository(uow.connection)
+            suppliers = SupplierRepository(uow.connection)
+            customers.add("Customer", "001")
+            suppliers.add("Supplier")
+            self.assertEqual(len(customers.search("")), 1)
+            self.assertEqual(len(suppliers.search("")), 1)
+        self.assertEqual(self.warehouse.search_customers(""), [])
+        self.assertEqual(self.warehouse.search_suppliers(""), [])
+
+    def test_duplicate_supplier_rolls_back_customer_in_same_transaction(self):
+        supplier_id = self.warehouse.add_supplier("Supplier")
+        with self.assertRaises(psycopg2.errors.UniqueViolation):
+            with UnitOfWork(self.config) as uow:
+                CustomerRepository(uow.connection).add("Customer", "001")
+                SupplierRepository(uow.connection).add("Supplier")
+        self.assertIsNone(self.warehouse.find_customer("Customer", "001"))
+        self.assertEqual(self.warehouse.find_supplier("Supplier"), supplier_id)
+        self.assertEqual(len(self.warehouse.search_suppliers("")), 1)
+
+    def test_party_search_filters_order_and_limits(self):
+        with UnitOfWork(self.config) as uow:
+            customers = CustomerRepository(uow.connection)
+            suppliers = SupplierRepository(uow.connection)
+            customer_ids = [
+                customers.add("B Acme", "001"),
+                customers.add("A Acme", "002"),
+                customers.add("Other", "003"),
+            ]
+            supplier_ids = [
+                suppliers.add("B Acme"), suppliers.add("A Acme"), suppliers.add("Other"),
+            ]
+            for repository, ids in ((customers, customer_ids), (suppliers, supplier_ids)):
+                with self.subTest(repository=type(repository).__name__):
+                    self.assertEqual([row.id for row in repository.search("")], ids)
+                    self.assertEqual([row.id for row in repository.search("acm")], ids[:2])
+                    self.assertEqual([row.id for row in repository.search("", 1)], ids[:1])
+                    self.assertEqual(repository.search("", 0), [])
+                    self.assertEqual(repository.search("Missing"), [])
+            uow.commit()
+
+    def test_party_names_are_bound_as_parameters(self):
+        name = "Company'; DROP TABLE suppliers; --"
+        with UnitOfWork(self.config) as uow:
+            customers = CustomerRepository(uow.connection)
+            suppliers = SupplierRepository(uow.connection)
+            customer_id = customers.add(name, "001")
+            supplier_id = suppliers.add(name)
+            self.assertEqual(customers.find(name, "001").id, customer_id)
+            self.assertEqual(suppliers.find(name).id, supplier_id)
+            self.assertEqual([row.id for row in customers.search(name)], [customer_id])
+            self.assertEqual([row.id for row in suppliers.search(name)], [supplier_id])
+            uow.commit()
+        self.assertEqual(self.warehouse.get_customer(customer_id)["name"], name)
+        self.assertEqual(self.warehouse.get_supplier(supplier_id)["name"], name)
+
+    def test_customer_facade_preserves_methods_and_result_fields(self):
+        customer_id = self.warehouse.add_customer("Customer", "000007")
+        expected = {"id": customer_id, "name": "Customer", "prod_card_number": "000007"}
+        self.assertEqual(self.warehouse.get_customer(customer_id), expected)
+        self.assertEqual(self.warehouse.find_customer("Customer", "000007"), customer_id)
+        self.assertEqual(self.warehouse.search_customers(query="cust", limit=1), [expected])
+        self.assertIsNone(self.warehouse.get_customer(999999))
+        self.assertIsNone(self.warehouse.find_customer("Missing", "000007"))
+
+    def test_supplier_facade_preserves_methods_and_result_fields(self):
+        supplier_id = self.warehouse.add_supplier("Supplier")
+        expected = {"id": supplier_id, "name": "Supplier"}
+        self.assertEqual(self.warehouse.get_supplier(supplier_id), expected)
+        self.assertEqual(self.warehouse.find_supplier("Supplier"), supplier_id)
+        self.assertEqual(self.warehouse.search_suppliers(query="supp", limit=1), [expected])
+        self.assertIsNone(self.warehouse.get_supplier(999999))
+        self.assertIsNone(self.warehouse.find_supplier("Missing"))
 
 
 if __name__ == "__main__":

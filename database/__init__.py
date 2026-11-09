@@ -1,4 +1,5 @@
 from contextlib import closing
+from dataclasses import asdict
 from datetime import date
 from decimal import Decimal
 
@@ -7,7 +8,10 @@ from pypika import Table, Parameter, PostgreSQLQuery
 
 from config import WarehouseConfig
 from database.enums import FilmType, TransactionType
-from database.repositories.catalog import FilmTypeRepository, MaterialRecord, MaterialRepository
+from database.repositories.catalog import (
+    CustomerRepository, FilmTypeRepository, MaterialRecord, MaterialRepository,
+    SupplierRepository,
+)
 from database.unit_of_work import UnitOfWork
 
 
@@ -80,142 +84,46 @@ class Warehouse:
         }
 
     def add_customer(self, name: str, prod_card_number: str) -> int:
-        customers = Table("customers")
-        q = (
-            PostgreSQLQuery.into(customers)
-                .columns("name", "prod_card_number")
-                .insert(Parameter("%s"), Parameter("%s"))
-                .returning("id")
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (name, prod_card_number))
-                customer_id = cur.fetchone()[0]
-
+        with UnitOfWork(self._config) as uow:
+            customer_id = CustomerRepository(uow.connection).add(name, prod_card_number)
+            uow.commit()
         return customer_id
 
     def find_customer(self, name: str, prod_card_number: str) -> int | None:
-        customers = Table("customers")
-        q = (
-            PostgreSQLQuery.from_(customers)
-                .select(customers.id)
-                .where(customers.name == Parameter("%s"))
-                .where(customers.prod_card_number == Parameter("%s"))
-                .limit(1)
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (name, prod_card_number))
-                row = cur.fetchone()
-
-        return row[0] if row else None
+        with UnitOfWork(self._config) as uow:
+            customer = CustomerRepository(uow.connection).find(name, prod_card_number)
+        return customer.id if customer else None
 
     def search_customers(self, query: str, limit: int = 10) -> list[dict]:
-        customers = Table("customers")
-        q = PostgreSQLQuery.from_(customers).select(
-            customers.id, customers.name, customers.prod_card_number
-        )
-        params: list = []
-        if query:
-            q = q.where(customers.name.ilike(Parameter("%s")))
-            params.append(f"%{query}%")
-        q = q.order_by(customers.id).limit(limit)
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), tuple(params))
-                rows = cur.fetchall()
-
-        return [
-            {"id": r[0], "name": r[1], "prod_card_number": r[2]}
-            for r in rows
-        ]
+        with UnitOfWork(self._config) as uow:
+            customers = CustomerRepository(uow.connection).search(query, limit)
+        return [asdict(customer) for customer in customers]
 
     def get_customer(self, customer_id: int) -> dict | None:
-        customers = Table("customers")
-        q = (
-            PostgreSQLQuery.from_(customers)
-                .select(customers.id, customers.name, customers.prod_card_number)
-                .where(customers.id == Parameter("%s"))
-                .limit(1)
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (customer_id,))
-                r = cur.fetchone()
-
-        if r is None:
-            return None
-        return {"id": r[0], "name": r[1], "prod_card_number": r[2]}
+        with UnitOfWork(self._config) as uow:
+            customer = CustomerRepository(uow.connection).get(customer_id)
+        return asdict(customer) if customer else None
 
     def add_supplier(self, name: str) -> int:
-        suppliers = Table("suppliers")
-        q = (
-            PostgreSQLQuery.into(suppliers)
-                .columns("name")
-                .insert(Parameter("%s"))
-                .returning("id")
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (name,))
-                supplier_id = cur.fetchone()[0]
-
+        with UnitOfWork(self._config) as uow:
+            supplier_id = SupplierRepository(uow.connection).add(name)
+            uow.commit()
         return supplier_id
 
     def find_supplier(self, name: str) -> int | None:
-        suppliers = Table("suppliers")
-        q = (
-            PostgreSQLQuery.from_(suppliers)
-                .select(suppliers.id)
-                .where(suppliers.name == Parameter("%s"))
-                .limit(1)
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (name,))
-                row = cur.fetchone()
-
-        return row[0] if row else None
+        with UnitOfWork(self._config) as uow:
+            supplier = SupplierRepository(uow.connection).find(name)
+        return supplier.id if supplier else None
 
     def search_suppliers(self, query: str, limit: int = 10) -> list[dict]:
-        suppliers = Table("suppliers")
-        q = PostgreSQLQuery.from_(suppliers).select(suppliers.id, suppliers.name)
-        params: list = []
-        if query:
-            q = q.where(suppliers.name.ilike(Parameter("%s")))
-            params.append(f"%{query}%")
-        q = q.order_by(suppliers.id).limit(limit)
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), tuple(params))
-                rows = cur.fetchall()
-
-        return [{"id": r[0], "name": r[1]} for r in rows]
+        with UnitOfWork(self._config) as uow:
+            suppliers = SupplierRepository(uow.connection).search(query, limit)
+        return [asdict(supplier) for supplier in suppliers]
 
     def get_supplier(self, supplier_id: int) -> dict | None:
-        suppliers = Table("suppliers")
-        q = (
-            PostgreSQLQuery.from_(suppliers)
-                .select(suppliers.id, suppliers.name)
-                .where(suppliers.id == Parameter("%s"))
-                .limit(1)
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (supplier_id,))
-                r = cur.fetchone()
-
-        if r is None:
-            return None
-        return {"id": r[0], "name": r[1]}
+        with UnitOfWork(self._config) as uow:
+            supplier = SupplierRepository(uow.connection).get(supplier_id)
+        return asdict(supplier) if supplier else None
 
     @staticmethod
     def _validate_delta(delta: Decimal, tt: TransactionType) -> None:
