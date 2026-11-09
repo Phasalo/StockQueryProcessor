@@ -111,7 +111,6 @@ class InitialMigrationPostgresTest(unittest.TestCase):
                     "WHERE code = 'BOPP' RETURNING id"
                 )
                 material_id = cursor.fetchone()[0]
-            uow.commit()
         return material_id
 
     def test_install_creates_schema_and_initial_film_types(self):
@@ -148,7 +147,6 @@ class InitialMigrationPostgresTest(unittest.TestCase):
             with uow.connection.cursor() as cursor:
                 cursor.execute("CREATE TABLE films (id int PRIMARY KEY)")
                 cursor.execute("INSERT INTO films VALUES (42)")
-            uow.commit()
         result = self.run_pgmigrate(expect_success=False)
         self.assertIn("empty schema", result.stderr)
         self.assertEqual(self.tables(), {"films"})
@@ -160,7 +158,6 @@ class InitialMigrationPostgresTest(unittest.TestCase):
         with UnitOfWork(self.config) as uow:
             with uow.connection.cursor() as cursor:
                 cursor.execute("UPDATE film_types SET name = 'Custom name' WHERE code = 'BOPP'")
-            uow.commit()
         self.run_pgmigrate()
         self.assertEqual(self.query("SELECT name FROM film_types WHERE code = 'BOPP'"), [
             ("Custom name",),
@@ -234,7 +231,6 @@ class InitialMigrationPostgresTest(unittest.TestCase):
                 customer_id = cursor.fetchone()[0]
                 cursor.execute("INSERT INTO suppliers (name) VALUES ('Supplier') RETURNING id")
                 supplier_id = cursor.fetchone()[0]
-            uow.commit()
         cases = [
             (
                 "CONSUMPTION", "ISSUE", -10, "consumption", "issues",
@@ -273,7 +269,6 @@ class InitialMigrationPostgresTest(unittest.TestCase):
                             values,
                         )
                         plan_id = cursor.fetchone()[0]
-                    uow.commit()
                 for link in (plan_id, None, None):
                     self.add_actual(
                         actual_type, material_id, quantity, actuals,
@@ -307,7 +302,6 @@ class InitialMigrationPostgresTest(unittest.TestCase):
                     ),
                     (transaction_id, party_id, plan_id, date(2026, 11, 10)),
                 )
-            uow.commit()
 
 
 if __name__ == "__main__":

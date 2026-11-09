@@ -59,7 +59,6 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
             cls.material_id = MaterialRepository(uow.connection).add(
                 film_type.id, "Brand", 1200, 25,
             )
-            uow.commit()
 
     @classmethod
     def drop_database(cls):
@@ -74,7 +73,6 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
         with UnitOfWork(self.config) as uow:
             with uow.connection.cursor() as cursor:
                 cursor.execute("TRUNCATE transactions RESTART IDENTITY CASCADE")
-            uow.commit()
 
     def transaction_count(self):
         with UnitOfWork(self.config) as uow:
@@ -94,7 +92,6 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
             self.assertIsNotNone(record.created_at.utcoffset())
             self.assertEqual(transactions.get(record.id), record)
             self.assertIsNone(transactions.get(999999))
-            uow.commit()
         with UnitOfWork(self.config) as uow:
             self.assertEqual(TransactionRepository(uow.connection).get(record.id), record)
 
@@ -107,7 +104,6 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
                     context.prec = 2
                     record = transactions.add(TransactionType.ADJUSTMENT, self.material_id, value)
                     self.assertEqual(record.quantity_delta_kg, value)
-            uow.commit()
 
     def test_all_schema_types_accept_valid_signs(self):
         cases = [
@@ -124,7 +120,6 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
                 with self.subTest(kind=kind, value=value):
                     record = transactions.add(kind, self.material_id, Decimal(value))
                     self.assertEqual(record.quantity_delta_kg, Decimal(value))
-            uow.commit()
         self.assertEqual(self.transaction_count(), len(cases))
 
     def test_invalid_quantities_are_rejected_without_rounding(self):
@@ -139,7 +134,6 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
                         TransactionRepository(uow.connection).add(
                             TransactionType.ADJUSTMENT, self.material_id, Decimal(value),
                         )
-                        uow.commit()
         self.assertEqual(self.transaction_count(), 0)
 
     def test_non_decimal_quantities_are_rejected(self):
@@ -150,7 +144,6 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
                         TransactionRepository(uow.connection).add(
                             TransactionType.RECEIPT, self.material_id, value,
                         )
-                        uow.commit()
         self.assertEqual(self.transaction_count(), 0)
 
     def test_database_rejects_wrong_signs_and_unknown_types(self):
@@ -168,7 +161,6 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
                         TransactionRepository(uow.connection).add(
                             kind, self.material_id, Decimal(value),
                         )
-                        uow.commit()
         self.assertEqual(self.transaction_count(), 0)
 
     def test_repository_does_not_commit_changes_implicitly(self):
@@ -177,6 +169,7 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
             record = transactions.add(TransactionType.RECEIPT, self.material_id, Decimal("1.00"))
             self.assertIsNotNone(transactions.get(record.id))
             self.assertEqual(self.transaction_count(), 0)
+            uow.rollback()
         self.assertEqual(self.transaction_count(), 0)
 
     def test_foreign_key_error_rolls_back_prior_journal_entries(self):

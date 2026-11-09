@@ -36,7 +36,8 @@ class UnitOfWorkLifecycleTest(unittest.TestCase):
             with uow:
                 self.assertIs(uow.connection, connect.return_value)
             connect.assert_called_once_with(self.config)
-            connect.return_value.commit.assert_not_called()
+            connect.return_value.commit.assert_called_once()
+            connect.return_value.rollback.assert_not_called()
             connect.return_value.close.assert_called_once()
         with self.assertRaises(RuntimeError):
             _ = uow.connection
@@ -66,7 +67,7 @@ class UnitOfWorkLifecycleTest(unittest.TestCase):
             uow = UnitOfWork(self.config)
             with self.assertRaises(psycopg2.OperationalError):
                 with uow:
-                    pass
+                    raise ValueError("Stop execution")
             connect.return_value.close.assert_called_once()
         with self.assertRaises(RuntimeError):
             _ = uow.connection
@@ -76,9 +77,22 @@ class UnitOfWorkLifecycleTest(unittest.TestCase):
             connect.return_value.commit.side_effect = psycopg2.OperationalError(
                 "Commit failed"
             )
-            with self.assertRaises(psycopg2.OperationalError):
-                with UnitOfWork(self.config) as uow:
-                    uow.commit()
+            uow = UnitOfWork(self.config)
+            with self.assertRaisesRegex(psycopg2.OperationalError, "Commit failed"):
+                with uow:
+                    pass
+            connect.return_value.commit.assert_called_once()
+            connect.return_value.rollback.assert_called_once()
+            connect.return_value.close.assert_called_once()
+        with self.assertRaises(RuntimeError):
+            _ = uow.connection
+
+    def test_base_exception_rolls_back_and_closes_connection(self):
+        with patch("database.unit_of_work.create_connection") as connect:
+            with self.assertRaises(KeyboardInterrupt):
+                with UnitOfWork(self.config):
+                    raise KeyboardInterrupt()
+            connect.return_value.commit.assert_not_called()
             connect.return_value.rollback.assert_called_once()
             connect.return_value.close.assert_called_once()
 
@@ -109,7 +123,10 @@ class UnitOfWorkPostgresTest(unittest.TestCase):
                     sql.SQL("CREATE TABLE {} (id int PRIMARY KEY)").format(cls.entries)
                 )
                 cursor.execute(
-                    sql.SQL("CREATE TABLE {} (entry_id int REFERENCES {} (id))").format(
+                    sql.SQL(
+                        "CREATE TABLE {} (entry_id int REFERENCES {} (id) "
+                        "DEFERRABLE INITIALLY DEFERRED)"
+                    ).format(
                         cls.audit, cls.entries
                     )
                 )
@@ -148,7 +165,7 @@ class UnitOfWorkPostgresTest(unittest.TestCase):
                 )
                 return cursor.fetchone()
 
-    def test_commit_persists_all_changes(self):
+    def test_successful_context_commits_all_changes(self):
         with UnitOfWork(self.config) as uow:
             connection = uow.connection
             self.insert_pair(connection)
@@ -156,14 +173,14 @@ class UnitOfWorkPostgresTest(unittest.TestCase):
             with connection.cursor() as cursor:
                 cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(self.audit))
                 self.assertEqual(cursor.fetchone()[0], 1)
-            uow.commit()
         self.assertEqual(self.persisted_counts(), (1, 1))
         self.assertTrue(connection.closed)
 
-    def test_context_without_commit_rolls_back_all_changes(self):
+    def test_explicit_rollback_discards_all_changes(self):
         with UnitOfWork(self.config) as uow:
             connection = uow.connection
             self.insert_pair(connection)
+            uow.rollback()
         self.assertEqual(self.persisted_counts(), (0, 0))
         self.assertTrue(connection.closed)
 
@@ -185,25 +202,47 @@ class UnitOfWorkPostgresTest(unittest.TestCase):
         self.assertEqual(self.persisted_counts(), (0, 0))
         self.assertTrue(connection.closed)
 
+    def test_commit_error_rolls_back_all_changes(self):
+        with self.assertRaises(psycopg2.errors.ForeignKeyViolation):
+            with UnitOfWork(self.config) as uow:
+                connection = uow.connection
+                self.insert_pair(connection)
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        sql.SQL("INSERT INTO {} (entry_id) VALUES (%s)").format(self.audit),
+                        (999999,),
+                    )
+        self.assertEqual(self.persisted_counts(), (0, 0))
+        self.assertTrue(connection.closed)
+
+    def test_early_return_commits_changes(self):
+        def write_and_return():
+            with UnitOfWork(self.config) as uow:
+                self.insert_pair(uow.connection)
+                return uow.connection
+
+        connection = write_and_return()
+        self.assertEqual(self.persisted_counts(), (1, 1))
+        self.assertTrue(connection.closed)
+
     def test_explicit_rollback_allows_a_new_transaction(self):
         with UnitOfWork(self.config) as uow:
             self.insert_pair(uow.connection)
             uow.rollback()
             self.assertEqual(self.persisted_counts(), (0, 0))
             self.insert_pair(uow.connection, entry_id=2)
-            uow.commit()
         self.assertEqual(self.persisted_counts(), (1, 1))
         with closing(create_connection(self.config)) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(sql.SQL("SELECT id FROM {}").format(self.entries))
                 self.assertEqual(cursor.fetchall(), [(2,)])
 
-    def test_changes_after_commit_require_another_commit(self):
+    def test_changes_after_explicit_commit_are_committed_on_exit(self):
         with UnitOfWork(self.config) as uow:
             self.insert_pair(uow.connection)
             uow.commit()
             self.insert_pair(uow.connection, entry_id=2)
-        self.assertEqual(self.persisted_counts(), (1, 1))
+        self.assertEqual(self.persisted_counts(), (2, 2))
 
 
 if __name__ == "__main__":

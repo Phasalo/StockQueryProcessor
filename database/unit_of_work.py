@@ -40,6 +40,13 @@ class UnitOfWork:
         connection = self.connection
         self._connection = None
         try:
-            connection.rollback()
+            if exc_type is not None:
+                connection.rollback()
+            else:
+                try:
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
         finally:
             connection.close()

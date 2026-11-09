@@ -32,7 +32,6 @@ class Warehouse:
             material_id = MaterialRepository(uow.connection).add(
                 record.id, brand, film_format, thickness,
             )
-            uow.commit()
         return material_id
 
     def find_film(
@@ -87,7 +86,6 @@ class Warehouse:
     def add_customer(self, name: str, prod_card_number: str) -> int:
         with UnitOfWork(self._config) as uow:
             customer_id = CustomerRepository(uow.connection).add(name, prod_card_number)
-            uow.commit()
         return customer_id
 
     def find_customer(self, name: str, prod_card_number: str) -> int | None:
@@ -108,7 +106,6 @@ class Warehouse:
     def add_supplier(self, name: str) -> int:
         with UnitOfWork(self._config) as uow:
             supplier_id = SupplierRepository(uow.connection).add(name)
-            uow.commit()
         return supplier_id
 
     def find_supplier(self, name: str) -> int | None:
@@ -146,7 +143,6 @@ class Warehouse:
         """Возвращает ID журнала; ID плана доступен через PlanRepository."""
         with UnitOfWork(self._config) as uow:
             plan = PlanRepository(uow.connection).add_consumption(film_id, customer_id, delta_kg)
-            uow.commit()
         return plan.transaction_id
 
     def create_adjustment(self, film_id: int, delta_kg: Decimal) -> int:
@@ -177,7 +173,6 @@ class Warehouse:
             plan = PlanRepository(uow.connection).add_receipt(
                 film_id, supplier_id, order_date, planned_date, delta_kg,
             )
-            uow.commit()
         return plan.transaction_id
 
     def find_open_planned_receipts(
@@ -199,7 +194,6 @@ class Warehouse:
             cancellation = PlanRepository(uow.connection).cancel(
                 plan_transaction_id, quantity_kg, reason,
             )
-            uow.commit()
         return cancellation
 
     @staticmethod

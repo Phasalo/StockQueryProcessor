@@ -71,7 +71,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
             customers = CustomerRepository(uow.connection)
             cls.customer_id = customers.add("Customer", "001")
             cls.other_customer_id = customers.add("Other customer", "002")
-            uow.commit()
 
     @classmethod
     def drop_database(cls):
@@ -88,7 +87,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
         with UnitOfWork(self.config) as uow:
             with uow.connection.cursor() as cursor:
                 cursor.execute("TRUNCATE transactions RESTART IDENTITY CASCADE")
-            uow.commit()
 
     def create_plan(self, kind="receipt", quantity=Decimal("100.00")):
         with UnitOfWork(self.config) as uow:
@@ -102,7 +100,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
                 plan = plans.add_consumption(
                     self.material_id, self.customer_id, quantity.copy_negate(),
                 )
-            uow.commit()
         return plan
 
     def count_rows(self, table):
@@ -132,7 +129,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
                         "VALUES (%s, %s, %s)",
                         (transaction.id, self.customer_id, plan.id),
                     )
-            uow.commit()
 
     def test_receipt_plan_has_distinct_ids_and_explicit_dates(self):
         with UnitOfWork(self.config) as uow:
@@ -152,7 +148,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
             self.assertEqual(plans.get_by_transaction_id(plan.transaction_id), plan)
             self.assertIsNone(plans.get_receipt(999999))
             self.assertIsNone(plans.get_by_transaction_id(999999))
-            uow.commit()
         with UnitOfWork(self.config) as uow:
             self.assertEqual(PlanRepository(uow.connection).get_receipt(plan.id), plan)
 
@@ -191,6 +186,8 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
                 self.material_id, self.supplier_id, self.order_date,
                 self.planned_date, Decimal("100"),
             )
+            self.assertEqual(self.count_rows("transactions"), 0)
+            uow.rollback()
         with UnitOfWork(self.config) as uow:
             self.assertIsNone(PlanRepository(uow.connection).get_receipt(plan.id))
             self.assertIsNone(TransactionRepository(uow.connection).get(plan.transaction_id))
@@ -234,7 +231,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
                         else plans.find_open_consumptions()
                     )
                     self.assertEqual(opened, [current])
-                    uow.commit()
         self.assertEqual(self.count_rows("transactions"), 2)
         self.assertEqual(self.count_rows("plan_cancellations"), 4)
 
@@ -254,7 +250,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
                         else plans.find_open_consumptions()
                     )
                     self.assertEqual(opened, [])
-                    uow.commit()
                 with self.assertRaisesRegex(ValueError, "закрыт"):
                     with UnitOfWork(self.config) as uow:
                         PlanRepository(uow.connection).cancel(plan.transaction_id, Decimal("1"), "Again")
@@ -307,7 +302,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
             journal = TransactionRepository(uow.connection)
             actual = journal.add("RECEIPT", self.material_id, Decimal("1"))
             incomplete = journal.add("PLANNED_RECEIPT", self.material_id, Decimal("1"))
-            uow.commit()
         for transaction_id in (999999, actual.id, incomplete.id):
             with self.subTest(transaction_id=transaction_id):
                 with self.assertRaises(ValueError):
@@ -335,7 +329,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
             plans.add_consumption(self.other_material_id, self.other_customer_id, Decimal("-100"))
             self.assertEqual(plans.find_open_consumptions(self.material_id, self.customer_id), [outgoing])
             self.assertEqual(plans.find_open_consumptions(self.material_id, self.other_customer_id), [])
-            uow.commit()
 
     def test_facade_keeps_journal_id_and_requires_order_date(self):
         warehouse = Warehouse(self.config)
@@ -345,7 +338,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
             )
         with UnitOfWork(self.config) as uow:
             TransactionRepository(uow.connection).add("ADJUSTMENT", self.material_id, Decimal("1"))
-            uow.commit()
         transaction_id = warehouse.create_planned_receipt(
             self.material_id, self.supplier_id, self.planned_date, Decimal("100"),
             order_date=self.order_date,
@@ -417,7 +409,6 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
                     )
                 except ValueError:
                     return None
-                uow.commit()
                 return cancellation
 
         with ThreadPoolExecutor(max_workers=2) as executor:

@@ -76,7 +76,6 @@ class CatalogPostgresTest(unittest.TestCase):
             types = FilmTypeRepository(uow.connection)
             self.bopp = types.add("BOPP", "Прозрачный BOPP")
             self.cpp = types.add("CPP", "Каст-полипропилен")
-            uow.commit()
         self.warehouse = Warehouse(self.config)
 
     def test_custom_type_and_material_share_one_transaction(self):
@@ -92,7 +91,6 @@ class CatalogPostgresTest(unittest.TestCase):
             material_id = materials.add(custom_type, "Brand", 1200, 25)
             expected = MaterialRecord(material_id, custom_type, "CUSTOM", "Brand", 1200, 25)
             self.assertEqual(materials.get(material_id), expected)
-            uow.commit()
         with UnitOfWork(self.config) as uow:
             self.assertEqual(MaterialRepository(uow.connection).get(material_id), expected)
 
@@ -115,7 +113,6 @@ class CatalogPostgresTest(unittest.TestCase):
             types = FilmTypeRepository(uow.connection)
             self.assertIsNone(types.get(999999))
             self.assertIsNone(types.find_by_code("MISSING"))
-            uow.commit()
 
     def test_duplicate_material_rolls_back_type_and_material_together(self):
         with self.assertRaises(psycopg2.errors.UniqueViolation):
@@ -135,6 +132,8 @@ class CatalogPostgresTest(unittest.TestCase):
             material_id = materials.add(custom_type, "Brand", 1200, 25)
             self.assertIsNotNone(materials.get(material_id))
             self.assertEqual(len(materials.search()), 1)
+            self.assertIsNone(self.warehouse.find_film("CUSTOM", "Brand", 1200, 25))
+            uow.rollback()
         with UnitOfWork(self.config) as uow:
             self.assertIsNone(FilmTypeRepository(uow.connection).find_by_code("CUSTOM"))
             self.assertEqual(MaterialRepository(uow.connection).search(), [])
@@ -180,7 +179,6 @@ class CatalogPostgresTest(unittest.TestCase):
             )
             self.assertEqual([row.id for row in materials.search(limit=1)], [first])
             self.assertEqual(materials.search(limit=0), [])
-            uow.commit()
 
     def test_brand_values_are_bound_as_parameters(self):
         brand = "Brand'; DROP TABLE materials; --"
@@ -190,7 +188,6 @@ class CatalogPostgresTest(unittest.TestCase):
             self.assertEqual(materials.find(self.bopp, brand, 1200, 25).id, material_id)
             self.assertEqual([row.id for row in materials.search(brand=brand)], [material_id])
             self.assertEqual(materials.get(material_id).brand, brand)
-            uow.commit()
 
     def test_facade_preserves_existing_methods_and_result_fields(self):
         material_id = self.warehouse.add_film(FilmType.BOPP, "Brand", 1200, 25)
@@ -210,7 +207,6 @@ class CatalogPostgresTest(unittest.TestCase):
     def test_facade_accepts_film_type_codes_from_database(self):
         with UnitOfWork(self.config) as uow:
             FilmTypeRepository(uow.connection).add("CUSTOM", "Новый тип")
-            uow.commit()
         material_id = self.warehouse.add_film("CUSTOM", "Brand", 1200, 25)
         self.assertEqual(self.warehouse.get_film(material_id)["type"], "CUSTOM")
         self.assertEqual(self.warehouse.find_film("CUSTOM", "Brand", 1200, 25), material_id)
@@ -234,7 +230,6 @@ class CatalogPostgresTest(unittest.TestCase):
             self.assertIsNone(customers.find("Заказчик", "123"))
             self.assertIsNone(customers.get(999999))
             self.assertIsNone(customers.find("Missing", "000123"))
-            uow.commit()
         with UnitOfWork(self.config) as uow:
             self.assertEqual(CustomerRepository(uow.connection).get(customer_id), expected)
 
@@ -256,7 +251,6 @@ class CatalogPostgresTest(unittest.TestCase):
             self.assertEqual(suppliers.find("Поставщик"), expected)
             self.assertIsNone(suppliers.get(999999))
             self.assertIsNone(suppliers.find("Missing"))
-            uow.commit()
         with UnitOfWork(self.config) as uow:
             self.assertEqual(SupplierRepository(uow.connection).get(supplier_id), expected)
 
@@ -271,7 +265,6 @@ class CatalogPostgresTest(unittest.TestCase):
             with UnitOfWork(self.config) as other:
                 self.assertEqual(CustomerRepository(other.connection).search(""), [])
                 self.assertEqual(SupplierRepository(other.connection).search(""), [])
-            uow.commit()
         self.assertIsNotNone(self.warehouse.get_customer(customer_id))
         self.assertIsNotNone(self.warehouse.get_supplier(supplier_id))
 
@@ -283,6 +276,9 @@ class CatalogPostgresTest(unittest.TestCase):
             suppliers.add("Supplier")
             self.assertEqual(len(customers.search("")), 1)
             self.assertEqual(len(suppliers.search("")), 1)
+            self.assertEqual(self.warehouse.search_customers(""), [])
+            self.assertEqual(self.warehouse.search_suppliers(""), [])
+            uow.rollback()
         self.assertEqual(self.warehouse.search_customers(""), [])
         self.assertEqual(self.warehouse.search_suppliers(""), [])
 
@@ -315,7 +311,6 @@ class CatalogPostgresTest(unittest.TestCase):
                     self.assertEqual([row.id for row in repository.search("", 1)], ids[:1])
                     self.assertEqual(repository.search("", 0), [])
                     self.assertEqual(repository.search("Missing"), [])
-            uow.commit()
 
     def test_party_names_are_bound_as_parameters(self):
         name = "Company'; DROP TABLE suppliers; --"
@@ -328,7 +323,6 @@ class CatalogPostgresTest(unittest.TestCase):
             self.assertEqual(suppliers.find(name).id, supplier_id)
             self.assertEqual([row.id for row in customers.search(name)], [customer_id])
             self.assertEqual([row.id for row in suppliers.search(name)], [supplier_id])
-            uow.commit()
         self.assertEqual(self.warehouse.get_customer(customer_id)["name"], name)
         self.assertEqual(self.warehouse.get_supplier(supplier_id)["name"], name)
 
