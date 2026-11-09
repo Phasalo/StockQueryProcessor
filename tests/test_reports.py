@@ -1,7 +1,7 @@
 from contextlib import closing
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from io import BytesIO
 from os import environ, getenv
 from pathlib import Path
@@ -25,12 +25,12 @@ from database.repositories.catalog import (
 )
 from database.repositories.movements import MovementRepository
 from database.repositories.plans import PlanRepository
-from database.repositories.reports import JournalRecord, ReportRepository
+from database.repositories.reports import JournalRecord, ReportRepository, StockRecord
 from database.repositories.transactions import TransactionRepository
 from database.unit_of_work import UnitOfWork
 
 
-class JournalPostgresTest(unittest.TestCase):
+class ReportRepositoryPostgresTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         dsn = getenv("TEST_DATABASE_DSN")
@@ -87,6 +87,155 @@ class JournalPostgresTest(unittest.TestCase):
     def journal(self):
         with UnitOfWork(self.config) as uow:
             return ReportRepository(uow.connection).list_transactions()
+
+    def stock(self, material_id=None):
+        with UnitOfWork(self.config) as uow:
+            return ReportRepository(uow.connection).get_stock(
+                self.material_id if material_id is None else material_id,
+            )
+
+    def test_stock_for_material_without_transactions_has_decimal_zeros(self):
+        record = self.stock()
+        self.assertIsInstance(record, StockRecord)
+        self.assertEqual(record.material_id, self.material_id)
+        self.assertEqual(record.film_type_code, "BOPP")
+        self.assertEqual(record.brand, "Brand")
+        for field in ("on_hand_kg", "reserved_kg", "planned_receipt_kg", "available_kg", "projected_kg"):
+            self.assertIsInstance(getattr(record, field), Decimal)
+            self.assertEqual(getattr(record, field), Decimal("0"))
+        with UnitOfWork(self.config) as uow:
+            self.assertIsNone(ReportRepository(uow.connection).get_stock(999999))
+
+    def test_stock_uses_only_facts_and_adjustments_for_physical_balance(self):
+        with UnitOfWork(self.config) as uow:
+            plans = PlanRepository(uow.connection)
+            plans.add_consumption(self.material_id, self.customer_id, Decimal("-50"))
+            plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("500"))
+            movements = MovementRepository(uow.connection)
+            movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("100.25"))
+            movements.add_issue(self.material_id, self.customer_id, self.actual_date, Decimal("-30.10"))
+            journal = TransactionRepository(uow.connection)
+            journal.add("ADJUSTMENT", self.material_id, Decimal("-5"))
+            journal.add("ADJUSTMENT", self.material_id, Decimal("2"))
+        record = self.stock()
+        self.assertEqual(record.on_hand_kg, Decimal("67.15"))
+        self.assertEqual(record.reserved_kg, Decimal("50"))
+        self.assertEqual(record.planned_receipt_kg, Decimal("500"))
+        self.assertEqual(record.available_kg, Decimal("17.15"))
+        self.assertEqual(record.projected_kg, Decimal("517.15"))
+
+    def test_stock_aggregates_multiple_plans_facts_and_cancellations_once(self):
+        with UnitOfWork(self.config) as uow:
+            plans = PlanRepository(uow.connection)
+            outgoing = plans.add_consumption(self.material_id, self.customer_id, Decimal("-80"))
+            plans.add_consumption(self.material_id, self.customer_id, Decimal("-10"))
+            incoming = plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("100"))
+            plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("5"))
+            for plan in (incoming, outgoing):
+                plans.cancel(plan.transaction_id, Decimal("10"), "First")
+                plans.cancel(plan.transaction_id, Decimal("15"), "Second")
+            movements = MovementRepository(uow.connection)
+            movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("30"))
+            movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("10"))
+            record = ReportRepository(uow.connection).get_stock(self.material_id)
+            self.assertEqual(record.reserved_kg, sum(plan.remaining_quantity_kg for plan in plans.find_open_consumptions()))
+            self.assertEqual(record.planned_receipt_kg, sum(plan.remaining_quantity_kg for plan in plans.find_open_receipts()))
+        self.assertEqual(record.on_hand_kg, Decimal("40"))
+        self.assertEqual(record.reserved_kg, Decimal("65"))
+        self.assertEqual(record.planned_receipt_kg, Decimal("80"))
+        self.assertEqual(record.available_kg, Decimal("-25"))
+        self.assertEqual(record.projected_kg, Decimal("55"))
+
+    def test_stock_excludes_fully_cancelled_plans(self):
+        with UnitOfWork(self.config) as uow:
+            plans = PlanRepository(uow.connection)
+            outgoing = plans.add_consumption(self.material_id, self.customer_id, Decimal("-80"))
+            incoming = plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("100"))
+            plans.cancel(outgoing.transaction_id, Decimal("80"), "All")
+            plans.cancel(incoming.transaction_id, Decimal("100"), "All")
+        record = self.stock()
+        self.assertEqual(record.on_hand_kg, Decimal("0"))
+        self.assertEqual(record.reserved_kg, Decimal("0"))
+        self.assertEqual(record.planned_receipt_kg, Decimal("0"))
+        self.assertEqual(record.available_kg, Decimal("0"))
+        self.assertEqual(record.projected_kg, Decimal("0"))
+
+    def test_stock_excludes_entire_executed_plan_for_smaller_and_larger_facts(self):
+        total = Decimal("0")
+        for quantity in (Decimal("1"), Decimal("150")):
+            with self.subTest(quantity=quantity):
+                with UnitOfWork(self.config) as uow:
+                    plans = PlanRepository(uow.connection)
+                    outgoing = plans.add_consumption(self.other_material_id, self.customer_id, Decimal("-80"))
+                    incoming = plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("100"))
+                    for plan in (incoming, outgoing):
+                        plans.cancel(plan.transaction_id, Decimal("30"), "Partial")
+                    movements = MovementRepository(uow.connection)
+                    movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, quantity, planned_receipt_id=incoming.id)
+                    movements.add_issue(self.other_material_id, self.customer_id, self.actual_date, quantity.copy_negate(), planned_consumption_id=outgoing.id)
+                total += quantity
+                incoming_stock = self.stock()
+                outgoing_stock = self.stock(self.other_material_id)
+                self.assertEqual(incoming_stock.on_hand_kg, total)
+                self.assertEqual(outgoing_stock.on_hand_kg, -total)
+                for record in (incoming_stock, outgoing_stock):
+                    self.assertEqual(record.reserved_kg, Decimal("0"))
+                    self.assertEqual(record.planned_receipt_kg, Decimal("0"))
+                    self.assertEqual(record.available_kg, record.on_hand_kg)
+                    self.assertEqual(record.projected_kg, record.on_hand_kg)
+
+    def test_stock_keeps_brands_separate_and_does_not_clamp_negative_balances(self):
+        with UnitOfWork(self.config) as uow:
+            movements = MovementRepository(uow.connection)
+            movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("20"))
+            movements.add_issue(self.other_material_id, self.customer_id, None, Decimal("-7"))
+            PlanRepository(uow.connection).add_consumption(self.material_id, self.customer_id, Decimal("-50"))
+            rows = ReportRepository(uow.connection).list_stock("BOPP")
+        self.assertEqual([row.material_id for row in rows], [self.material_id, self.other_material_id])
+        self.assertEqual([row.brand for row in rows], ["Brand", "Other"])
+        self.assertEqual([row.on_hand_kg for row in rows], [Decimal("20"), Decimal("-7")])
+        self.assertEqual([row.available_kg for row in rows], [Decimal("-30"), Decimal("-7")])
+        self.assertEqual([row.projected_kg for row in rows], [Decimal("-30"), Decimal("-7")])
+
+    def test_stock_filter_supports_custom_types_and_binds_the_code(self):
+        code = "STOCK'; DROP TABLE materials; --"
+        with UnitOfWork(self.config) as uow:
+            film_type_id = FilmTypeRepository(uow.connection).add(code, "Отдельный тип")
+            material_id = MaterialRepository(uow.connection).add(film_type_id, "New", 1500, 30)
+            reports = ReportRepository(uow.connection)
+            row, = reports.list_stock(code)
+            self.assertEqual(row.material_id, material_id)
+            self.assertEqual(row.film_type_code, code)
+            self.assertEqual(row.film_type_name, "Отдельный тип")
+            self.assertEqual(reports.list_stock("MISSING"), [])
+            self.assertGreaterEqual(len(reports.list_stock()), 3)
+
+    def test_stock_decimal_sums_are_exact_and_can_exceed_single_entry_range(self):
+        with UnitOfWork(self.config) as uow:
+            movements = MovementRepository(uow.connection)
+            for _ in range(2):
+                movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("99999999.99"))
+            plans = PlanRepository(uow.connection)
+            outgoing = plans.add_consumption(self.material_id, self.customer_id, Decimal("-99999999.99"))
+            incoming = plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("1.01"))
+            for plan in (outgoing, incoming):
+                plans.cancel(plan.transaction_id, Decimal("0.01"), "Partial")
+        with localcontext() as context:
+            context.prec = 2
+            record = self.stock()
+        self.assertEqual(record.on_hand_kg, Decimal("199999999.98"))
+        self.assertEqual(record.reserved_kg, Decimal("99999999.98"))
+        self.assertEqual(record.planned_receipt_kg, Decimal("1"))
+        self.assertEqual(record.available_kg, Decimal("100000000.00"))
+        self.assertEqual(record.projected_kg, Decimal("100000001.00"))
+
+    def test_stock_uses_callers_transaction_without_committing(self):
+        with UnitOfWork(self.config) as uow:
+            TransactionRepository(uow.connection).add("ADJUSTMENT", self.material_id, Decimal("5"))
+            self.assertEqual(ReportRepository(uow.connection).get_stock(self.material_id).on_hand_kg, Decimal("5"))
+            self.assertEqual(self.stock().on_hand_kg, Decimal("0"))
+            uow.rollback()
+        self.assertEqual(self.stock().on_hand_kg, Decimal("0"))
 
     def test_empty_journal_does_not_include_materials_without_transactions(self):
         self.assertEqual(self.journal(), [])

@@ -3,11 +3,11 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from psycopg2.extensions import connection
-from pypika import Case, Parameter, PostgreSQLQuery, Table, functions
-from pypika.terms import NullValue
+from pypika import Parameter, PostgreSQLQuery, Table
 
 from database.enums import TransactionType
 from database.repositories.locks import lock_material
+from database.repositories.plan_queries import select_plans
 from database.repositories.transactions import TransactionRepository, validate_quantity
 
 
@@ -97,13 +97,13 @@ class PlanRepository:
         )
 
     def get_receipt(self, plan_id: int) -> PlanRecord | None:
-        query = self._select(TransactionType.PLANNED_RECEIPT)
+        query = select_plans(TransactionType.PLANNED_RECEIPT)
         return self._fetch_one(
             query.where(Table("planned_receipts").id == Parameter("%s")), (plan_id,),
         )
 
     def get_consumption(self, plan_id: int) -> PlanRecord | None:
-        query = self._select(TransactionType.CONSUMPTION)
+        query = select_plans(TransactionType.CONSUMPTION)
         return self._fetch_one(
             query.where(Table("consumption").id == Parameter("%s")), (plan_id,),
         )
@@ -116,7 +116,7 @@ class PlanRepository:
             return None
         kind = TransactionType[transaction.transaction_type]
         return self._fetch_one(
-            self._select(kind).where(Table("transactions").id == Parameter("%s")),
+            select_plans(kind).where(Table("transactions").id == Parameter("%s")),
             (transaction_id,),
         )
 
@@ -184,57 +184,10 @@ class PlanRepository:
             if cursor.fetchone() is None:
                 raise ValueError(f"План transaction_id={transaction_id} изменился или удалён.")
 
-    @staticmethod
-    def _select(kind: TransactionType):
-        transactions = Table("transactions")
-        cancellations = Table("plan_cancellations")
-        cancelled = (
-            PostgreSQLQuery.from_(cancellations)
-            .select(
-                cancellations.plan_transaction_id,
-                functions.Sum(cancellations.quantity_kg).as_("quantity_kg"),
-            )
-            .groupby(cancellations.plan_transaction_id)
-        ).as_("cancelled")
-        if kind == TransactionType.CONSUMPTION:
-            plans = Table("consumption")
-            facts = Table("issues")
-            plan_link = facts.planned_consumption_id
-            customer = plans.customer_id
-            supplier = order_date = planned_date = NullValue()
-        else:
-            plans = Table("planned_receipts")
-            facts = Table("receipts")
-            plan_link = facts.planned_receipt_id
-            supplier = plans.supplier_id
-            order_date = plans.order_date
-            planned_date = plans.planned_date
-            customer = NullValue()
-        total = functions.Coalesce(cancelled.quantity_kg, Decimal("0.00"))
-        remaining = (
-            Case().when(facts.id.notnull(), Decimal("0.00"))
-            .else_(functions.Abs(transactions.quantity_delta_kg) - total)
-        )
-        return (
-            PostgreSQLQuery.from_(plans)
-            .join(transactions).on(transactions.id == plans.transaction_id)
-            .left_join(cancelled).on(cancelled.plan_transaction_id == transactions.id)
-            .left_join(facts).on(plan_link == plans.id)
-            .select(
-                plans.id, transactions.id.as_("transaction_id"), transactions.transaction_type,
-                transactions.material_id, transactions.quantity_delta_kg,
-                customer.as_("customer_id"), supplier.as_("supplier_id"),
-                order_date.as_("order_date"), planned_date.as_("planned_date"),
-                total.as_("cancelled_quantity_kg"), remaining.as_("remaining_quantity_kg"),
-                facts.id.notnull().as_("is_executed"),
-            )
-            .where(transactions.transaction_type == kind.name)
-        )
-
     def _find_open(
         self, kind: TransactionType, material_id: int | None, party_id: int | None, limit: int,
     ) -> list[PlanRecord]:
-        plans = self._select(kind).as_("open_plans")
+        plans = select_plans(kind).as_("open_plans")
         query = (
             PostgreSQLQuery.from_(plans).select(plans.star)
             .where(plans.remaining_quantity_kg > 0)

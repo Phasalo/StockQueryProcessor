@@ -3,9 +3,10 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from psycopg2.extensions import connection
-from pypika import Order, PostgreSQLQuery, Table, functions
+from pypika import Order, Parameter, PostgreSQLQuery, Table, functions
 
 from database.enums import TransactionType
+from database.repositories.plan_queries import select_plans
 
 
 @dataclass(frozen=True)
@@ -30,9 +31,89 @@ class JournalRecord:
     actual_date: date | None
 
 
+@dataclass(frozen=True)
+class StockRecord:
+    material_id: int
+    film_type_code: str
+    film_type_name: str
+    brand: str
+    format: int
+    thickness: int
+    on_hand_kg: Decimal
+    reserved_kg: Decimal
+    planned_receipt_kg: Decimal
+    available_kg: Decimal
+    projected_kg: Decimal
+
+
 class ReportRepository:
     def __init__(self, connection: connection):
         self._connection = connection
+
+    def get_stock(self, material_id: int) -> StockRecord | None:
+        query = self._stock_query().where(Table("materials").id == Parameter("%s"))
+        with self._connection.cursor() as cursor:
+            cursor.execute(str(query), (material_id,))
+            row = cursor.fetchone()
+        return StockRecord(*row) if row else None
+
+    def list_stock(self, film_type_code: str | None = None) -> list[StockRecord]:
+        query = self._stock_query()
+        params = ()
+        if film_type_code is not None:
+            query = query.where(Table("film_types").code == Parameter("%s"))
+            params = (film_type_code,)
+        materials = Table("materials")
+        query = query.orderby(
+            Table("film_types").code, materials.format, materials.thickness,
+            materials.brand, materials.id,
+        )
+        with self._connection.cursor() as cursor:
+            cursor.execute(str(query), params)
+            return [StockRecord(*row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def _stock_query():
+        materials = Table("materials")
+        film_types = Table("film_types")
+        transactions = Table("transactions")
+        physical = (
+            PostgreSQLQuery.from_(transactions)
+            .select(transactions.material_id, functions.Sum(transactions.quantity_delta_kg).as_("quantity_kg"))
+            .where(transactions.transaction_type.isin([
+                TransactionType.RECEIPT.name, TransactionType.ISSUE.name,
+                TransactionType.ADJUSTMENT.name,
+            ]))
+            .groupby(transactions.material_id)
+        ).as_("physical")
+        reserved = ReportRepository._open_plan_totals(TransactionType.CONSUMPTION).as_("reserved")
+        expected = ReportRepository._open_plan_totals(TransactionType.PLANNED_RECEIPT).as_("expected")
+        on_hand_kg = functions.Coalesce(physical.quantity_kg, Decimal("0.00"))
+        reserved_kg = functions.Coalesce(reserved.quantity_kg, Decimal("0.00"))
+        expected_kg = functions.Coalesce(expected.quantity_kg, Decimal("0.00"))
+        return (
+            PostgreSQLQuery.from_(materials)
+            .join(film_types).on(film_types.id == materials.film_type_id)
+            .left_join(physical).on(physical.material_id == materials.id)
+            .left_join(reserved).on(reserved.material_id == materials.id)
+            .left_join(expected).on(expected.material_id == materials.id)
+            .select(
+                materials.id, film_types.code, film_types.name,
+                materials.brand, materials.format, materials.thickness,
+                on_hand_kg, reserved_kg, expected_kg,
+                on_hand_kg - reserved_kg, on_hand_kg - reserved_kg + expected_kg,
+            )
+        )
+
+    @staticmethod
+    def _open_plan_totals(kind: TransactionType):
+        plans = select_plans(kind).as_("open_plans")
+        return (
+            PostgreSQLQuery.from_(plans)
+            .select(plans.material_id, functions.Sum(plans.remaining_quantity_kg).as_("quantity_kg"))
+            .where(plans.remaining_quantity_kg > 0)
+            .groupby(plans.material_id)
+        )
 
     def list_transactions(self) -> list[JournalRecord]:
         transactions = Table("transactions")
