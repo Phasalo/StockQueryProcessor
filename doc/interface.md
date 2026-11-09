@@ -38,4 +38,5 @@ uv run --locked python main.py
 
 ```sh
 uv run --locked python -m unittest discover -s tests -v
+uv run --locked ruff check .
 ```

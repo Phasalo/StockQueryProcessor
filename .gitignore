@@ -5,6 +5,7 @@ build/
 dist/
 
 .venv/
+.ruff_cache/
 venv/
 .env
 *.env
