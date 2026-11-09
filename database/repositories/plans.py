@@ -7,6 +7,7 @@ from pypika import Case, Parameter, PostgreSQLQuery, Table, functions
 from pypika.terms import NullValue
 
 from database.enums import TransactionType
+from database.repositories.locks import lock_material
 from database.repositories.transactions import TransactionRepository, validate_quantity
 
 
@@ -50,7 +51,7 @@ class PlanRepository:
         validate_quantity(quantity_delta_kg)
         if quantity_delta_kg > 0:
             raise ValueError("Планируемый расход должен иметь отрицательную дельту.")
-        self._lock_material(material_id)
+        lock_material(self._connection, material_id)
         transaction = self._transactions.add(
             TransactionType.CONSUMPTION, material_id, quantity_delta_kg,
         )
@@ -76,7 +77,7 @@ class PlanRepository:
         validate_quantity(quantity_delta_kg)
         if quantity_delta_kg < 0:
             raise ValueError("Планируемый приход должен иметь положительную дельту.")
-        self._lock_material(material_id)
+        lock_material(self._connection, material_id)
         transaction = self._transactions.add(
             TransactionType.PLANNED_RECEIPT, material_id, quantity_delta_kg,
         )
@@ -137,10 +138,7 @@ class PlanRepository:
             raise ValueError("Отменяемое количество должно быть положительным.")
         if not isinstance(reason, str) or not reason.strip():
             raise ValueError("Причина отмены не может быть пустой.")
-        self._lock_plan(plan_transaction_id)
-        plan = self.get_by_transaction_id(plan_transaction_id)
-        if plan is None:
-            raise ValueError(f"У плана transaction_id={plan_transaction_id} нет детализации.")
+        plan = self.get_for_update(plan_transaction_id)
         if plan.is_closed:
             raise ValueError(f"План transaction_id={plan_transaction_id} уже закрыт.")
         if quantity_kg > plan.remaining_quantity_kg:
@@ -155,16 +153,12 @@ class PlanRepository:
             cursor.execute(str(query), (plan_transaction_id, quantity_kg, reason))
             return PlanCancellationRecord(*cursor.fetchone())
 
-    def _lock_material(self, material_id: int) -> None:
-        query = (
-            PostgreSQLQuery.from_(Table("materials"))
-            .select("id").where(Table("materials").id == Parameter("%s"))
-            .for_update()
-        )
-        with self._connection.cursor() as cursor:
-            cursor.execute(str(query), (material_id,))
-            if cursor.fetchone() is None:
-                raise ValueError(f"Материал id={material_id} не найден.")
+    def get_for_update(self, transaction_id: int) -> PlanRecord:
+        self._lock_plan(transaction_id)
+        plan = self.get_by_transaction_id(transaction_id)
+        if plan is None:
+            raise ValueError(f"У плана transaction_id={transaction_id} нет детализации.")
+        return plan
 
     def _lock_plan(self, transaction_id: int) -> None:
         transaction = self._transactions.get(transaction_id)
@@ -174,7 +168,7 @@ class PlanRepository:
             TransactionType.CONSUMPTION.name, TransactionType.PLANNED_RECEIPT.name,
         ):
             raise ValueError(f"Транзакция id={transaction_id} не является планом.")
-        self._lock_material(transaction.material_id)
+        lock_material(self._connection, transaction.material_id)
         transactions = Table("transactions")
         query = (
             PostgreSQLQuery.from_(transactions).select(transactions.id)

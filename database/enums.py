@@ -56,6 +56,13 @@ class TransactionType(Enum):
         can_be_negative=False
     )
 
+    ISSUE = _TransactionTypeInfo(
+        ru_name="Фактический расход",
+        description="Уменьшение количества (-)",
+        can_be_positive=False,
+        can_be_negative=True
+    )
+
     @classmethod
     def get_sql_name(cls) -> str:
         return "enum_transaction_type"
