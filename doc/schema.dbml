@@ -1,31 +1,42 @@
-Enum enum_film_type {
-  BOPP [note: 'Прозрачный BOPP']
-  BOPP_PEARL [note: 'BOPP жемчужный (перламутровый)']
-  BOPP_METAL [note: 'BOPP металлизированный']
-  CPP [note: 'Каст-полипропилен']
-  LDPE_HALF_SLEEVE [note: 'ПВД полурукав']
-  LDPE_FLAT_SHEET [note: 'ПВД полотно']
+Table film_types {
+  id int [primary key, increment]
+  code varchar(50) [not null, unique]
+  name varchar(255) [not null]
+
+  Note: '''
+    code не зависит от отображаемого названия. Начальные значения:
+    BOPP — Прозрачный BOPP;
+    BOPP_PEARL — BOPP жемчужный (перламутровый);
+    BOPP_METAL — BOPP металлизированный;
+    CPP — Каст-полипропилен;
+    LDPE_HALF_SLEEVE — ПВД полурукав;
+    LDPE_FLAT_SHEET — ПВД полотно.
+  '''
 }
 
 Enum enum_transaction_type {
-  CONSUMPTION [note: 'Планируемый расход. Δ кол-во обычно с минусом.']
-  ADJUSTMENT [note: 'Корректировка. Любое изменение +/-.']
-  PLANNED_RECEIPT [note: 'Планируемый приход. Δ кол-во с плюсом.']
-  RECEIPT [note: 'Фактический приход. Δ кол-во с плюсом.']
+  CONSUMPTION [note: 'Планируемый расход. Отрицательная дельта; физический остаток не меняет.']
+  ISSUE [note: 'Фактический расход. Отрицательная дельта; уменьшает физический остаток.']
+  ADJUSTMENT [note: 'Корректировка +/-. Не заменяет фактический расход; правила ещё не согласованы.']
+  PLANNED_RECEIPT [note: 'Планируемый приход. Положительная дельта; физический остаток не меняет.']
+  RECEIPT [note: 'Фактический приход. Положительная дельта; увеличивает физический остаток.']
 }
 
-Table films {
+Table materials {
   id int [primary key, increment]
-  type enum_film_type [not null, note: 'Тип пленки']
+  film_type_id int [ref: > film_types.id, not null]
   brand varchar(255) [not null, note: 'Марка']
   format int [not null, note: 'Ширина в мм']
   thickness int [not null, note: 'Толщина в мкм']
 
   indexes {
-    (type, brand, format, thickness) [unique, name: 'idx_film_unique_params']
+    (film_type_id, brand, format, thickness) [unique, name: 'idx_materials_unique_params']
   }
 
-  Note: 'Справочник всех видов пленок на складе'
+  checks {
+    `format > 0` [name: 'chk_materials_positive_format']
+    `thickness > 0` [name: 'chk_materials_positive_thickness']
+  }
 }
 
 Table customers {
@@ -49,13 +60,28 @@ Table suppliers {
 
 Table transactions {
   id int [primary key, increment]
-  created_at datetime [not null, default: `now()`, note: 'Дата и время создания записи']
+  created_at timestamptz [not null, default: `now()`]
   transaction_type enum_transaction_type [not null]
 
-  film_id int [ref: > films.id, not null, note: 'Ссылка на справочник пленок']
-  film_delta_kg decimal(10,2) [not null, note: 'Изменение количества (+/-) в кг']
+  material_id int [ref: > materials.id, not null]
+  quantity_delta_kg decimal(10,2) [not null, note: 'Изменение количества (+/-) в кг']
 
-  Note: 'Основная таблица транзакций склада. Хранит все движения пленки.'
+  indexes {
+    (material_id, transaction_type) [name: 'idx_transactions_material_type']
+  }
+
+  checks {
+    `quantity_delta_kg <> 0` [name: 'chk_transactions_nonzero_delta']
+    `(transaction_type IN ('CONSUMPTION', 'ISSUE') AND quantity_delta_kg < 0) OR (transaction_type IN ('PLANNED_RECEIPT', 'RECEIPT') AND quantity_delta_kg > 0) OR transaction_type = 'ADJUSTMENT'` [name: 'chk_transactions_delta_sign']
+  }
+
+  Note: '''
+    Общий журнал фактов и планов. CONSUMPTION и PLANNED_RECEIPT
+    не включаются в физический остаток. Исходное количество плана
+    не переписывается при исполнении или отмене.
+    Адаптер проверяет соответствие типа транзакции таблице детализации
+    и создаёт журнал и детализацию в одной транзакции PostgreSQL.
+  '''
 }
 
 Table consumption {
@@ -63,23 +89,86 @@ Table consumption {
   transaction_id int [ref: > transactions.id, not null, unique, note: 'Связь 1:1 с основной транзакцией']
   customer_id int [ref: > customers.id, not null, note: 'Ссылка на заказчика']
 
-  Note: 'Детализация для транзакций типа Планируемый расход'
+  Note: '''
+    Пока расход не проведён, открытый резерв равен
+    -transactions.quantity_delta_kg - сумма отмен.
+    Единственный связанный расход закрывает план и снимает весь
+    оставшийся резерв. Повторное исполнение запрещено.
+  '''
+}
+
+Table issues {
+  id int [primary key, increment]
+  transaction_id int [ref: > transactions.id, not null, unique]
+  customer_id int [ref: > customers.id, not null]
+  planned_consumption_id int [ref: - consumption.id, unique, note: 'NULL — расход без плана. UNIQUE запрещает повторное исполнение плана.']
+  actual_date date [note: 'Бизнес-дата расхода; обязательность пока не согласована. Не подменяется created_at.']
+
+  Note: '''
+    Детализация ISSUE. При исполнении плана материал и заказчик
+    должны совпадать. Полностью отменённый план исполнять нельзя.
+    Проверка и запись выполняются под блокировками материала и плана
+    в одной транзакции; расход уменьшает физический остаток
+    на фактическое количество и полностью снимает резерв плана.
+    Правило сравнения количества факта и плана ещё не согласовано.
+  '''
 }
 
 Table planned_receipts {
   id int [primary key, increment]
   transaction_id int [ref: > transactions.id, not null, unique, note: 'Связь 1:1 с основной транзакцией']
   supplier_id int [ref: > suppliers.id, not null, note: 'Ссылка на поставщика']
+  order_date date [not null, note: 'Дата размещения заказа; не выводится из created_at.']
   planned_date date [not null, note: 'Ожидаемая дата прихода']
 
-  Note: 'Детализация для транзакций типа Планируемый приход. Выполнение плана проверяется через таблицу receipts.'
+  Note: '''
+    До фактического прихода ожидаемое количество равно
+    transactions.quantity_delta_kg - сумма отмен.
+    Единственный связанный приход закрывает план: ожидаемое количество
+    становится нулевым. Повторное исполнение запрещено.
+  '''
 }
 
 Table receipts {
   id int [primary key, increment]
   transaction_id int [ref: > transactions.id, not null, unique, note: 'Связь 1:1 с основной транзакцией']
-  planned_receipt_id int [ref: > planned_receipts.id, not null, unique, note: 'Ссылка на план. NOT NULL запрещает приход без плана. UNIQUE запрещает принять один план дважды.']
+  supplier_id int [ref: > suppliers.id, not null]
+  planned_receipt_id int [ref: - planned_receipts.id, unique, note: 'NULL — приход без плана. UNIQUE запрещает повторное исполнение плана.']
   actual_date date [not null, note: 'Фактическая дата прихода']
 
-  Note: 'Детализация для транзакций типа Фактический приход'
+  Note: '''
+    Детализация RECEIPT. При исполнении плана материал и поставщик
+    должны совпадать. Полностью отменённый план исполнять нельзя.
+    Проверка и запись выполняются под блокировками материала
+    и плана в одной транзакции. Правило сравнения количества факта
+    и плана ещё не согласовано.
+  '''
+}
+
+Table plan_cancellations {
+  id int [primary key, increment]
+  plan_transaction_id int [ref: > transactions.id, not null]
+  quantity_kg decimal(10,2) [not null, note: 'Отменяемое количество в положительных кг для обоих направлений плана.']
+  reason text [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    plan_transaction_id [name: 'idx_plan_cancellations_plan']
+  }
+
+  checks {
+    `quantity_kg > 0` [name: 'chk_plan_cancellations_positive_quantity']
+    `length(trim(reason)) > 0` [name: 'chk_plan_cancellations_reason']
+  }
+
+  Note: '''
+    Ссылка допустима только на CONSUMPTION или PLANNED_RECEIPT.
+    Отмена допустима только до единственного фактического движения
+    и не превышает количество плана за вычетом предыдущих отмен.
+    Адаптер проверяет тип, отсутствие исполнения и сумму отмен под теми же
+    блокировками, что и исполнение. Эти ограничения между строками
+    не выражаются CHECK.
+    Записи отмен не изменяются и не удаляются; физический остаток
+    отмена плана не меняет. Автор отмены сохраняется в аудите движка.
+  '''
 }
