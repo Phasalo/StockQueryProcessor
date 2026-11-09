@@ -4,8 +4,11 @@ from semantic_entry.core.contracts import (
     CommandEffect,
     CommandModel,
     CommandSpec,
+    FieldError,
     PermissionDeniedError,
+    PreparationResult,
 )
+from semantic_entry.core.preparation import CommandPreparer
 from semantic_entry.core.registry import CommandRegistry
 
 __all__ = [
@@ -14,6 +17,9 @@ __all__ = [
     "CommandEffect",
     "CommandModel",
     "CommandSpec",
+    "CommandPreparer",
     "CommandRegistry",
+    "FieldError",
     "PermissionDeniedError",
+    "PreparationResult",
 ]

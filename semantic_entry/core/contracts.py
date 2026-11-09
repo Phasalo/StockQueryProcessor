@@ -76,3 +76,27 @@ class CommandSpec(Generic[InputT, ResultT]):
 
     def result_json_schema(self) -> dict[str, Any]:
         return self.result_model.model_json_schema()
+
+
+@dataclass(frozen=True)
+class FieldError:
+    path: tuple[str | int, ...]
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class PreparationResult:
+    command_name: str
+    command_version: int
+    actor_id: str
+    validated_input: CommandModel | None
+    errors: tuple[FieldError, ...] = ()
+
+    @property
+    def is_valid(self) -> bool:
+        return self.validated_input is not None and not self.errors
+
+    @property
+    def missing_fields(self) -> tuple[tuple[str | int, ...], ...]:
+        return tuple(error.path for error in self.errors if error.code == "missing")
