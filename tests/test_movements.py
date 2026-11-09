@@ -16,6 +16,7 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
+from database import Warehouse
 from database.connection import create_connection
 from database.enums import TransactionType
 from database.repositories.catalog import (
@@ -111,6 +112,156 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
             with uow.connection.cursor() as cursor:
                 cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table)))
                 return cursor.fetchone()[0]
+
+    def saved_movement(self, kind, transaction_id):
+        with UnitOfWork(self.config) as uow:
+            with uow.connection.cursor() as cursor:
+                table = "receipts" if kind == "receipt" else "issues"
+                cursor.execute(
+                    sql.SQL("SELECT id FROM {} WHERE transaction_id = %s").format(sql.Identifier(table)),
+                    (transaction_id,),
+                )
+                movement_id = cursor.fetchone()[0]
+            movements = MovementRepository(uow.connection)
+            return movements.get_receipt(movement_id) if kind == "receipt" else movements.get_issue(movement_id)
+
+    def test_facade_receipt_preserves_positional_arguments_and_uses_plan_supplier(self):
+        with UnitOfWork(self.config) as uow:
+            TransactionRepository(uow.connection).add("ADJUSTMENT", self.material_id, Decimal("1"))
+        plan = self.create_plan("receipt")
+        warehouse = Warehouse(self.config)
+        warehouse.cancel_plan(plan.transaction_id, Decimal("30"), "Partial")
+        transaction_id = warehouse.create_receipt(
+            self.material_id, plan.id, self.actual_date, Decimal("150"),
+        )
+        receipt = self.saved_movement("receipt", transaction_id)
+        self.assertNotEqual(receipt.id, transaction_id)
+        self.assertEqual(receipt.transaction_id, transaction_id)
+        self.assertEqual(receipt.material_id, self.material_id)
+        self.assertEqual(receipt.supplier_id, self.supplier_id)
+        self.assertEqual(receipt.actual_date, self.actual_date)
+        self.assertEqual(receipt.planned_receipt_id, plan.id)
+        self.assertEqual(receipt.quantity_delta_kg, Decimal("150"))
+        current = warehouse.get_planned_receipt(plan.id)
+        self.assertTrue(current["is_closed"])
+        self.assertEqual(current["delta_kg"], Decimal("100"))
+        self.assertEqual(current["cancelled_quantity_kg"], Decimal("30"))
+        self.assertEqual(current["remaining_quantity_kg"], Decimal("0"))
+
+    def test_facade_unplanned_receipt_requires_explicit_supplier(self):
+        warehouse = Warehouse(self.config)
+        with self.assertRaisesRegex(ValueError, "supplier_id"):
+            warehouse.create_receipt(self.material_id, None, self.actual_date, Decimal("10"))
+        self.assertEqual(self.count_rows("transactions"), 0)
+        transaction_id = warehouse.create_receipt(
+            self.material_id, None, self.actual_date, Decimal("10"),
+            supplier_id=self.supplier_id,
+        )
+        receipt = self.saved_movement("receipt", transaction_id)
+        self.assertEqual(receipt.supplier_id, self.supplier_id)
+        self.assertIsNone(receipt.planned_receipt_id)
+        self.assertEqual(self.count_rows("planned_receipts"), 0)
+
+    def test_facade_planned_receipt_checks_explicit_supplier(self):
+        plan = self.create_plan("receipt")
+        warehouse = Warehouse(self.config)
+        with self.assertRaisesRegex(ValueError, "Контрагент"):
+            warehouse.create_receipt(
+                self.material_id, plan.id, self.actual_date, Decimal("10"),
+                supplier_id=self.other_supplier_id,
+            )
+        self.assertEqual(self.count_rows("transactions"), 1)
+        self.assertFalse(warehouse.get_planned_receipt(plan.id)["is_closed"])
+        transaction_id = warehouse.create_receipt(
+            self.material_id, plan.id, self.actual_date, Decimal("10"),
+            supplier_id=self.supplier_id,
+        )
+        self.assertEqual(self.saved_movement("receipt", transaction_id).planned_receipt_id, plan.id)
+
+    def test_facade_invalid_receipt_plan_does_not_create_fact(self):
+        plan = self.create_plan("receipt")
+        warehouse = Warehouse(self.config)
+        for material_id, plan_id, supplier in (
+            (self.material_id, 999999, None),
+            (self.material_id, 999999, self.supplier_id),
+            (self.other_material_id, plan.id, None),
+        ):
+            with self.subTest(material_id=material_id, plan_id=plan_id, supplier=supplier):
+                with self.assertRaises(ValueError):
+                    warehouse.create_receipt(
+                        material_id, plan_id, self.actual_date, Decimal("10"), supplier_id=supplier,
+                    )
+        self.assertEqual(self.count_rows("transactions"), 1)
+        self.assertEqual(self.count_rows("receipts"), 0)
+
+    def test_facade_missing_receipt_date_rolls_back_journal(self):
+        with self.assertRaises(psycopg2.errors.NotNullViolation):
+            Warehouse(self.config).create_receipt(
+                self.material_id, None, None, Decimal("10"), supplier_id=self.supplier_id,
+            )
+        self.assertEqual(self.count_rows("transactions"), 0)
+        self.assertEqual(self.count_rows("receipts"), 0)
+
+    def test_facade_issue_allows_negative_stock_and_explicitly_absent_date(self):
+        transaction_id = Warehouse(self.config).create_issue(
+            self.material_id, self.customer_id, None, Decimal("-150"),
+        )
+        issue = self.saved_movement("issue", transaction_id)
+        self.assertEqual(issue.customer_id, self.customer_id)
+        self.assertEqual(issue.material_id, self.material_id)
+        self.assertEqual(issue.quantity_delta_kg, Decimal("-150"))
+        self.assertIsNone(issue.actual_date)
+        self.assertIsNone(issue.planned_consumption_id)
+        self.assertEqual(self.count_rows("consumption"), 0)
+        self.assertEqual(self.count_rows("receipts"), 0)
+        with UnitOfWork(self.config) as uow:
+            transaction = TransactionRepository(uow.connection).get(transaction_id)
+            self.assertEqual(transaction.transaction_type, "ISSUE")
+            self.assertEqual(transaction.quantity_delta_kg, Decimal("-150"))
+
+    def test_facade_issue_closes_plan_and_rejects_repeated_execution(self):
+        with UnitOfWork(self.config) as uow:
+            TransactionRepository(uow.connection).add("ADJUSTMENT", self.material_id, Decimal("1"))
+        plan = self.create_plan("issue")
+        warehouse = Warehouse(self.config)
+        warehouse.cancel_plan(plan.transaction_id, Decimal("30"), "Partial")
+        transaction_id = warehouse.create_issue(
+            self.material_id, self.customer_id, self.actual_date, Decimal("-150"),
+            planned_consumption_id=plan.id,
+        )
+        issue = self.saved_movement("issue", transaction_id)
+        self.assertNotEqual(issue.id, transaction_id)
+        self.assertEqual(issue.planned_consumption_id, plan.id)
+        self.assertEqual(issue.quantity_delta_kg, Decimal("-150"))
+        self.assertEqual(issue.actual_date, self.actual_date)
+        with UnitOfWork(self.config) as uow:
+            current = PlanRepository(uow.connection).get_by_transaction_id(plan.transaction_id)
+            self.assertTrue(current.is_executed)
+            self.assertEqual(current.quantity_delta_kg, Decimal("-100"))
+            self.assertEqual(current.remaining_quantity_kg, Decimal("0"))
+        with self.assertRaisesRegex(ValueError, "закрыт"):
+            warehouse.create_issue(
+                self.material_id, self.customer_id, self.actual_date, Decimal("-1"),
+                planned_consumption_id=plan.id,
+            )
+        self.assertEqual(self.count_rows("issues"), 1)
+        self.assertEqual(self.count_rows("transactions"), 3)
+
+    def test_facade_issue_requires_matching_customer_and_negative_delta(self):
+        plan = self.create_plan("issue")
+        warehouse = Warehouse(self.config)
+        for customer_id, quantity in (
+            (self.other_customer_id, Decimal("-10")),
+            (self.customer_id, Decimal("10")),
+        ):
+            with self.subTest(customer_id=customer_id, quantity=quantity):
+                with self.assertRaises(ValueError):
+                    warehouse.create_issue(
+                        self.material_id, customer_id, self.actual_date, quantity,
+                        planned_consumption_id=plan.id,
+                    )
+        self.assertEqual(self.count_rows("issues"), 0)
+        self.assertEqual(self.count_rows("transactions"), 1)
 
     def test_unplanned_movements_preserve_ids_parties_dates_and_signs(self):
         with UnitOfWork(self.config) as uow:

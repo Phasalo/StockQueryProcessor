@@ -12,6 +12,7 @@ from database.repositories.catalog import (
     CustomerRepository, FilmTypeRepository, MaterialRecord, MaterialRepository,
     SupplierRepository,
 )
+from database.repositories.movements import MovementRepository
 from database.repositories.plans import PlanCancellationRecord, PlanRecord, PlanRepository
 from database.unit_of_work import UnitOfWork
 
@@ -211,73 +212,31 @@ class Warehouse:
             "is_closed": plan.is_closed,
         }
 
-    def create_receipt(self, film_id: int, planned_receipt_id: int, actual_date: date, delta_kg: Decimal) -> int:
-        tt = TransactionType.RECEIPT
-        self._validate_delta(delta_kg, tt)
+    def create_receipt(
+        self, film_id: int, planned_receipt_id: int | None,
+        actual_date: date, delta_kg: Decimal, *, supplier_id: int | None = None,
+    ) -> int:
+        with UnitOfWork(self._config) as uow:
+            if supplier_id is None:
+                if planned_receipt_id is None:
+                    raise ValueError("Для прихода без плана требуется supplier_id.")
+                plan = PlanRepository(uow.connection).get_receipt(planned_receipt_id)
+                if plan is None:
+                    raise ValueError(f"Плановый приход id={planned_receipt_id} не найден.")
+                supplier_id = plan.supplier_id
+            movement = MovementRepository(uow.connection).add_receipt(
+                film_id, supplier_id, actual_date, delta_kg,
+                planned_receipt_id=planned_receipt_id,
+            )
+        return movement.transaction_id
 
-        transactions = Table("transactions")
-        planned_receipts = Table("planned_receipts")
-        receipts = Table("receipts")
-
-        q_lock = (
-            PostgreSQLQuery.from_(planned_receipts)
-                .join(transactions)
-                .on(planned_receipts.transaction_id == transactions.id)
-                .select(transactions.film_id)
-                .where(planned_receipts.id == Parameter("%s"))
-                .for_update(of=planned_receipts)
-        )
-
-        q_check = (
-            PostgreSQLQuery.from_(receipts)
-                .select(receipts.id)
-                .where(receipts.planned_receipt_id == Parameter("%s"))
-                .limit(1)
-        )
-        q_tx = (
-            PostgreSQLQuery.into(transactions)
-                .columns("transaction_type", "film_id", "film_delta_kg")
-                .insert(Parameter("%s"), Parameter("%s"), Parameter("%s"))
-                .returning("id")
-        )
-        q_r = (
-            PostgreSQLQuery.into(receipts)
-                .columns("transaction_id", "planned_receipt_id", "actual_date")
-                .insert(Parameter("%s"), Parameter("%s"), Parameter("%s"))
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn, conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q_lock), (planned_receipt_id,))
-                row = cur.fetchone()
-                if row is None:
-                    raise ValueError(
-                        f"Плановый приход id={planned_receipt_id} не найден."
-                    )
-                planned_film_id = row[0]
-
-                cur.execute(str(q_check), (planned_receipt_id,))
-                existing = cur.fetchone()
-                if existing is not None:
-                    raise ValueError(
-                        f"Плановый приход id={planned_receipt_id} уже закрыт "
-                        f"(receipt id={existing[0]})."
-                    )
-
-                if planned_film_id != film_id:
-                    raise ValueError(
-                        f"film_id={film_id} не совпадает с film_id={planned_film_id}, "
-                        f"указанным в плановом приходе id={planned_receipt_id}."
-                    )
-
-                cur.execute(str(q_tx), (tt.name, planned_film_id, delta_kg))
-                tx_id = cur.fetchone()[0]
-
-                try:
-                    cur.execute(str(q_r), (tx_id, planned_receipt_id, actual_date))
-                except psycopg2.errors.UniqueViolation:
-                    raise ValueError(
-                        f"Плановый приход id={planned_receipt_id} уже закрыт."
-                    )
-
-        return tx_id
+    def create_issue(
+        self, film_id: int, customer_id: int, actual_date: date | None,
+        delta_kg: Decimal, *, planned_consumption_id: int | None = None,
+    ) -> int:
+        with UnitOfWork(self._config) as uow:
+            movement = MovementRepository(uow.connection).add_issue(
+                film_id, customer_id, actual_date, delta_kg,
+                planned_consumption_id=planned_consumption_id,
+            )
+        return movement.transaction_id
