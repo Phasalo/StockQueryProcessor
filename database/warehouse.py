@@ -5,12 +5,19 @@ from decimal import Decimal
 from config import WarehouseConfig
 from database.enums import FilmType, TransactionType
 from database.repositories.catalog import (
-    CustomerRepository, FilmTypeRepository, MaterialRecord, MaterialRepository,
+    CustomerRepository,
+    FilmTypeRepository,
+    MaterialRecord,
+    MaterialRepository,
     SupplierRepository,
 )
 from database.repositories.locks import lock_material
 from database.repositories.movements import MovementRepository
-from database.repositories.plans import PlanCancellationRecord, PlanRecord, PlanRepository
+from database.repositories.plans import (
+    PlanCancellationRecord,
+    PlanRecord,
+    PlanRepository,
+)
 from database.repositories.transactions import TransactionRepository, validate_quantity
 from database.unit_of_work import UnitOfWork
 

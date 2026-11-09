@@ -1,13 +1,13 @@
+import subprocess
+import sys
+import unittest
 from contextlib import closing
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal, localcontext
 from io import BytesIO
 from os import environ, getenv
 from pathlib import Path
-import subprocess
-import sys
-import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -21,7 +21,10 @@ from database.connection import create_connection
 from database.enums import FilmType, TransactionType
 from database.reports import WarehouseReports
 from database.repositories.catalog import (
-    CustomerRepository, FilmTypeRepository, MaterialRepository, SupplierRepository,
+    CustomerRepository,
+    FilmTypeRepository,
+    MaterialRepository,
+    SupplierRepository,
 )
 from database.repositories.movements import MovementRepository
 from database.repositories.plans import PlanRepository
@@ -450,10 +453,10 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
             journal = TransactionRepository(uow.connection)
             ids = [journal.add("ADJUSTMENT", self.material_id, Decimal("1")).id for _ in range(3)]
             with uow.connection.cursor() as cursor:
-                cursor.execute("UPDATE transactions SET created_at = %s", (datetime(2026, 11, 1, tzinfo=timezone.utc),))
+                cursor.execute("UPDATE transactions SET created_at = %s", (datetime(2026, 11, 1, tzinfo=UTC),))
                 cursor.execute(
                     "UPDATE transactions SET created_at = %s WHERE id = %s",
-                    (datetime(2026, 11, 2, tzinfo=timezone.utc), ids[0]),
+                    (datetime(2026, 11, 2, tzinfo=UTC), ids[0]),
                 )
         self.assertEqual([row.transaction_id for row in self.journal()], [ids[0], ids[2], ids[1]])
 
@@ -465,7 +468,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
         rows = WarehouseReports(self.config).get_all_transactions()
         self.assertEqual([row["id"] for row in rows], [second.transaction_id, first.transaction_id])
         self.assertEqual([row["film_brand"] for row in rows], ["Other", "Brand"])
-        for row, material_id, quantity in zip(rows, (self.other_material_id, self.material_id), (Decimal("20"), Decimal("10"))):
+        for row, material_id, quantity in zip(rows, (self.other_material_id, self.material_id), (Decimal("20"), Decimal("10")), strict=True):
             self.assertEqual(row["material_id"], material_id)
             self.assertEqual(row["film_type"], FilmType.BOPP)
             self.assertEqual(row["transaction_type"], TransactionType.RECEIPT)

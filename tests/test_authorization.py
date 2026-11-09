@@ -1,10 +1,15 @@
-from dataclasses import FrozenInstanceError, replace
 import unittest
+from dataclasses import FrozenInstanceError, replace
 from unittest.mock import Mock
 
 from semantic_entry.core import (
-    Actor, CommandCatalog, CommandEffect, CommandModel, CommandRegistry,
-    CommandSpec, PermissionDenied,
+    Actor,
+    CommandCatalog,
+    CommandEffect,
+    CommandModel,
+    CommandRegistry,
+    CommandSpec,
+    PermissionDeniedError,
 )
 
 
@@ -49,23 +54,23 @@ class CommandAuthorizationTest(unittest.TestCase):
     def test_direct_lookup_checks_write_and_read_permissions(self):
         self.assertIs(self.catalog.get("notes.read", 1, self.reader), self.read)
         self.assertIs(self.catalog.get("notes.write", 1, self.writer), self.write)
-        with self.assertRaises(PermissionDenied):
+        with self.assertRaises(PermissionDeniedError):
             self.catalog.get("notes.write", 1, self.reader)
-        with self.assertRaises(PermissionDenied):
+        with self.assertRaises(PermissionDeniedError):
             self.catalog.get("notes.read", 1, Actor("unknown"))
 
     def test_access_is_checked_again_after_grant_is_revoked(self):
         self.assertIs(self.catalog.get("notes.read", 1, self.reader), self.read)
         self.policy.grants["reader"].clear()
         self.assertEqual(self.catalog.list(self.reader), ())
-        with self.assertRaises(PermissionDenied):
+        with self.assertRaises(PermissionDeniedError):
             self.catalog.get("notes.read", 1, self.reader)
 
     def test_versions_can_require_different_permissions(self):
         restricted = replace(self.read, version=2, permission="notes.read_sensitive")
         self.registry.register(restricted)
         self.assertEqual(self.catalog.list(self.reader), (self.read,))
-        with self.assertRaises(PermissionDenied):
+        with self.assertRaises(PermissionDeniedError):
             self.catalog.get("notes.read", 2, self.reader)
 
     def test_authorizer_receives_trusted_actor_and_command_permission(self):
@@ -91,7 +96,7 @@ class CommandAuthorizationTest(unittest.TestCase):
                 authorizer.is_allowed.return_value = response
                 catalog = CommandCatalog(self.registry, authorizer)
                 self.assertEqual(catalog.list(self.reader), ())
-                with self.assertRaises(PermissionDenied):
+                with self.assertRaises(PermissionDeniedError):
                     catalog.get("notes.read", 1, self.reader)
 
     def test_unknown_command_does_not_fall_back_to_an_allowed_one(self):

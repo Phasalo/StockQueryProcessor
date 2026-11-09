@@ -1,6 +1,6 @@
+import unittest
 from contextlib import closing
 from os import getenv
-import unittest
 from unittest.mock import patch
 from uuid import uuid4
 

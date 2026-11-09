@@ -1,10 +1,25 @@
 from datetime import datetime
 
-from flask import Blueprint, abort, redirect, render_template, request, send_file, url_for
+from flask import (
+    Blueprint,
+    abort,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
 
 from database.enums import FilmType, TransactionType
+
 from . import reports
-from .ui_schema import SUMMARY_COLUMNS, CONSUMPTION_COLUMNS, RECEIPT_COLUMNS, TRANSACTION_COLUMNS, column
+from .ui_schema import (
+    CONSUMPTION_COLUMNS,
+    RECEIPT_COLUMNS,
+    SUMMARY_COLUMNS,
+    TRANSACTION_COLUMNS,
+    column,
+)
 from .xlsx import workbook
 
 ui = Blueprint("ui", __name__)

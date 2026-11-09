@@ -1,3 +1,6 @@
+import subprocess
+import sys
+import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
@@ -5,10 +8,7 @@ from datetime import date
 from decimal import Decimal, localcontext
 from os import environ, getenv
 from pathlib import Path
-import subprocess
-import sys
 from threading import Barrier
-import unittest
 from uuid import uuid4
 
 import psycopg2
@@ -19,7 +19,10 @@ from config import WarehouseConfig
 from database import Warehouse
 from database.connection import create_connection
 from database.repositories.catalog import (
-    CustomerRepository, FilmTypeRepository, MaterialRepository, SupplierRepository,
+    CustomerRepository,
+    FilmTypeRepository,
+    MaterialRepository,
+    SupplierRepository,
 )
 from database.repositories.plans import PlanRepository
 from database.repositories.transactions import TransactionRepository

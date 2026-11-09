@@ -1,11 +1,16 @@
-from dataclasses import FrozenInstanceError, replace
 import subprocess
 import sys
 import unittest
+from dataclasses import FrozenInstanceError, replace
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
-from semantic_entry.core import CommandEffect, CommandModel, CommandRegistry, CommandSpec
+from semantic_entry.core import (
+    CommandEffect,
+    CommandModel,
+    CommandRegistry,
+    CommandSpec,
+)
 
 
 class AddInput(CommandModel):

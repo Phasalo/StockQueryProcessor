@@ -1,7 +1,7 @@
+import unittest
 from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
-import unittest
 from unittest.mock import patch
 
 from openpyxl import load_workbook

@@ -1,3 +1,6 @@
+import subprocess
+import sys
+import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
@@ -5,10 +8,7 @@ from datetime import date
 from decimal import Decimal
 from os import environ, getenv
 from pathlib import Path
-import subprocess
-import sys
 from threading import Barrier
-import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -21,9 +21,16 @@ from database import Warehouse
 from database.connection import create_connection
 from database.enums import TransactionType
 from database.repositories.catalog import (
-    CustomerRepository, FilmTypeRepository, MaterialRepository, SupplierRepository,
+    CustomerRepository,
+    FilmTypeRepository,
+    MaterialRepository,
+    SupplierRepository,
 )
-from database.repositories.movements import IssueRecord, MovementRepository, ReceiptRecord
+from database.repositories.movements import (
+    IssueRecord,
+    MovementRepository,
+    ReceiptRecord,
+)
 from database.repositories.plans import PlanRepository
 from database.repositories.transactions import TransactionRepository
 from database.unit_of_work import UnitOfWork
@@ -523,7 +530,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
             plan = self.create_plan(kind)
             barrier = Barrier(2)
 
-            def execute():
+            def execute(kind=kind, plan=plan, barrier=barrier):
                 with UnitOfWork(self.config) as uow:
                     with uow.connection.cursor() as cursor:
                         cursor.execute("SET LOCAL lock_timeout = '3s'")
@@ -546,7 +553,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
             plan = self.create_plan(kind)
             barrier = Barrier(2)
 
-            def perform(operation):
+            def perform(operation, kind=kind, plan=plan, barrier=barrier):
                 with UnitOfWork(self.config) as uow:
                     with uow.connection.cursor() as cursor:
                         cursor.execute("SET LOCAL lock_timeout = '3s'")

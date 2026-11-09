@@ -1,13 +1,13 @@
+import json
+import subprocess
+import sys
+import unittest
 from contextlib import closing
 from dataclasses import replace
 from datetime import date
-import json
 from os import environ, getenv
 from pathlib import Path
-import subprocess
-import sys
 from tempfile import TemporaryDirectory
-import unittest
 from uuid import uuid4
 
 import psycopg2
@@ -17,7 +17,6 @@ from psycopg2.extensions import parse_dsn
 from config import WarehouseConfig
 from database.connection import create_connection
 from database.unit_of_work import UnitOfWork
-
 
 ROOT = Path(__file__).resolve().parent.parent
 MIGRATION_PATH = ROOT / "migrations" / "V001__initial_warehouse.sql"

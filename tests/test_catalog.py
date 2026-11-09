@@ -1,10 +1,10 @@
+import subprocess
+import sys
+import unittest
 from contextlib import closing
 from dataclasses import replace
 from os import environ, getenv
 from pathlib import Path
-import subprocess
-import sys
-import unittest
 from uuid import uuid4
 
 import psycopg2
@@ -15,9 +15,14 @@ from config import WarehouseConfig
 from database import FilmType, Warehouse
 from database.connection import create_connection
 from database.repositories.catalog import (
-    CustomerRecord, CustomerRepository,
-    FilmTypeRecord, FilmTypeRepository, MaterialRecord, MaterialRepository,
-    SupplierRecord, SupplierRepository,
+    CustomerRecord,
+    CustomerRepository,
+    FilmTypeRecord,
+    FilmTypeRepository,
+    MaterialRecord,
+    MaterialRepository,
+    SupplierRecord,
+    SupplierRepository,
 )
 from database.unit_of_work import UnitOfWork
 

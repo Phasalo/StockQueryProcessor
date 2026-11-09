@@ -1,8 +1,19 @@
-﻿from datetime import date, datetime
+from datetime import date, datetime
 from io import BytesIO
 
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+
+def _cell_value(value, formatter):
+    if value is None or value == "":
+        return "—"
+    if formatter in ("date", "datetime"):
+        if not isinstance(value, (date, datetime)):
+            value = datetime.fromisoformat(str(value))
+        pattern = "%d.%m.%Y %H:%M" if formatter == "datetime" else "%d.%m.%Y"
+        return value.strftime(pattern)
+    return value
 
 
 def workbook(sheets, parameters=None):
@@ -21,17 +32,9 @@ def workbook(sheets, parameters=None):
         for source in rows:
             values = []
             for col in columns:
-                value = source.get(col['data'])
-                fmt = col.get('formatter', 'text')
-                if value is None or value == '':
-                    value = '—'
-                elif fmt in ('date', 'datetime'):
-                    if not isinstance(value, (date, datetime)):
-                        value = datetime.fromisoformat(str(value))
-                    value = value.strftime('%d.%m.%Y %H:%M' if fmt == 'datetime' else '%d.%m.%Y')
-                values.append(value)
+                values.append(_cell_value(source.get(col["data"]), col.get("formatter", "text")))
             sheet.append(values)
-            for cell, col in zip(sheet[sheet.max_row], columns):
+            for cell, col in zip(sheet[sheet.max_row], columns, strict=False):
                 if isinstance(cell.value, str):
                     cell.value = ILLEGAL_CHARACTERS_RE.sub('', cell.value)
                     cell.data_type = 's'

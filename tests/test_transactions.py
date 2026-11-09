@@ -1,11 +1,11 @@
+import subprocess
+import sys
+import unittest
 from contextlib import closing
 from dataclasses import replace
 from decimal import Decimal, localcontext
 from os import environ, getenv
 from pathlib import Path
-import subprocess
-import sys
-import unittest
 from uuid import uuid4
 
 import psycopg2

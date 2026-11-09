@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from types import TracebackType
+from typing import TYPE_CHECKING
 
-from psycopg2.extensions import connection
-
-from config import WarehouseConfig
 from database.connection import create_connection
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+    from psycopg2.extensions import connection
+
+    from config import WarehouseConfig
 
 
 class UnitOfWork:

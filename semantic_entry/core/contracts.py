@@ -1,12 +1,12 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
 
-class CommandEffect(str, Enum):
+class CommandEffect(StrEnum):
     READ = "READ"
     WRITE = "WRITE"
 
@@ -20,7 +20,7 @@ class Actor:
             raise ValueError("actor_id должен быть непустой строкой.")
 
 
-class PermissionDenied(PermissionError):
+class PermissionDeniedError(PermissionError):
     pass
 
 

@@ -2,6 +2,7 @@ from flask import Flask
 
 from config import warehouse_config
 from database.reports import WarehouseReports
+
 from .formatting import format_value, sort_value
 
 app = Flask(__name__)
