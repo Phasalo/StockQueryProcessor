@@ -3,11 +3,14 @@ def column(title, key, formatter="text"):
 
 
 SUMMARY_COLUMNS = [
+    column("Марка", "brand"),
     column("Формат, мм", "format", "int"),
     column("Толщина, мкм", "thickness", "int"),
     column("Σ Планируемый расход", "planned_consumption_kg", "kg"),
+    column("Физический остаток", "on_hand_kg", "kg"),
     column("Свободный остаток", "free_balance_kg", "kg"),
     column("Σ Планируемый приход", "planned_receipt_kg", "kg"),
+    column("Прогнозный остаток", "projected_kg", "kg"),
 ]
 CONSUMPTION_COLUMNS = [
     column("Заказчик", "customer_name"),

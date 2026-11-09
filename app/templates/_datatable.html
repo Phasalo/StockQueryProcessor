@@ -4,7 +4,7 @@
     <thead><tr>{% for col in columns %}<th>{{ col.title }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in rows %}
-        <tr {% if link_type %}data-href="{{ url_for('ui.detail', raw=link_type, film_format=row.format, thickness=row.thickness) }}" tabindex="0" title="Открыть детализацию"{% endif %}>
+        <tr {% if link_type %}data-href="{{ url_for('ui.detail', raw=link_type, film_format=row.format, thickness=row.thickness, brand=row.get('brand')) }}" tabindex="0" title="Открыть детализацию"{% endif %}>
           {% for col in columns %}
             {% set value = row.get(col.data) %}
             {% set signed = table_id == 'transactions-table' and col.data == 'film_delta_kg' %}

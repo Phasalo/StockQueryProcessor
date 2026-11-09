@@ -7,13 +7,32 @@
     {{ header_field('film-type', 'Тип плёнки', film_types, selected_type) }}
     {{ header_field('film-format', 'Формат, мм', formats, selected_format) }}
     {{ header_field('film-thickness', 'Толщина, мкм', thicknesses, selected_thickness) }}
+    {% if brands %}
+    <div class="report-field">
+      <label for="film-brand">Марка:</label>
+      <select id="film-brand" name="film-brand" class="form-select">
+        {% if selected_brand is none %}<option value="" disabled selected>Выберите марку</option>{% endif %}
+        {% for brand in brands %}<option value="{{ brand }}" {% if brand == selected_brand %}selected{% endif %}>{{ brand or '(без марки)' }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
   </div>
 {% endblock %}
 {% block body %}
+  {% if summary is none %}
+    {{ data_block('Выберите марку, чтобы открыть остатки и планы.') }}
+  {% else %}
   {% set balance %}Свободный остаток: <strong>{{ summary.free_balance_kg|report_value('kg', with_unit=true) }}</strong>{% endset %}
   {% set consumption %}Σ Планируемый расход: <strong>{{ summary.planned_consumption_kg|report_value('kg', with_unit=true) }}</strong>{% endset %}
   {% set receipt %}Σ Планируемый приход: <strong>{{ summary.planned_receipt_kg|report_value('kg', with_unit=true) }}</strong>{% endset %}
   {{ data_block(balance) }}
+  {% if summary.on_hand_kg is defined %}
+    {% set physical %}Физический остаток: <strong>{{ summary.on_hand_kg|report_value('kg', with_unit=true) }}</strong>{% endset %}
+    {% set projected %}Прогнозный остаток: <strong>{{ summary.projected_kg|report_value('kg', with_unit=true) }}</strong>{% endset %}
+    {{ data_block(physical) }}
+    {{ data_block(projected) }}
+  {% endif %}
   {{ data_block(consumption, datatable('consumption-table', consumption_columns, consumption_rows, empty_message='Нет запланированного расхода')) }}
   {{ data_block(receipt, datatable('receipt-table', receipt_columns, receipt_rows, empty_message='Нет запланированного прихода')) }}
+  {% endif %}
 {% endblock %}

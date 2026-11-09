@@ -46,6 +46,29 @@ class StockRecord:
     projected_kg: Decimal
 
 
+@dataclass(frozen=True)
+class ConsumptionDetailRecord:
+    plan_id: int
+    transaction_id: int
+    material_id: int
+    customer_id: int
+    customer_name: str
+    prod_card_number: str
+    remaining_quantity_kg: Decimal
+
+
+@dataclass(frozen=True)
+class ReceiptPlanDetailRecord:
+    plan_id: int
+    transaction_id: int
+    material_id: int
+    supplier_id: int
+    supplier_name: str
+    order_date: date
+    planned_date: date
+    remaining_quantity_kg: Decimal
+
+
 class ReportRepository:
     def __init__(self, connection: connection):
         self._connection = connection
@@ -57,20 +80,88 @@ class ReportRepository:
             row = cursor.fetchone()
         return StockRecord(*row) if row else None
 
-    def list_stock(self, film_type_code: str | None = None) -> list[StockRecord]:
+    def list_stock(
+        self, film_type_code: str | None = None, *, film_format: int | None = None,
+        thickness: int | None = None, brand: str | None = None,
+    ) -> list[StockRecord]:
         query = self._stock_query()
-        params = ()
+        params = []
         if film_type_code is not None:
             query = query.where(Table("film_types").code == Parameter("%s"))
-            params = (film_type_code,)
+            params.append(film_type_code)
         materials = Table("materials")
+        for field, value in (("format", film_format), ("thickness", thickness), ("brand", brand)):
+            if value is not None:
+                query = query.where(materials[field] == Parameter("%s"))
+                params.append(value)
         query = query.orderby(
             Table("film_types").code, materials.format, materials.thickness,
             materials.brand, materials.id,
         )
         with self._connection.cursor() as cursor:
-            cursor.execute(str(query), params)
+            cursor.execute(str(query), tuple(params))
             return [StockRecord(*row) for row in cursor.fetchall()]
+
+    def list_open_consumption(self, material_id: int) -> list[ConsumptionDetailRecord]:
+        plans = select_plans(TransactionType.CONSUMPTION).as_("plans")
+        customers = Table("customers")
+        query = (
+            PostgreSQLQuery.from_(plans).join(customers).on(customers.id == plans.customer_id)
+            .select(
+                plans.id, plans.transaction_id, plans.material_id, customers.id,
+                customers.name, customers.prod_card_number, plans.remaining_quantity_kg,
+            )
+            .where(plans.material_id == Parameter("%s"))
+            .where(plans.remaining_quantity_kg > 0)
+            .orderby(customers.name, plans.transaction_id)
+        )
+        with self._connection.cursor() as cursor:
+            cursor.execute(str(query), (material_id,))
+            return [ConsumptionDetailRecord(*row) for row in cursor.fetchall()]
+
+    def list_open_receipts(self, material_id: int) -> list[ReceiptPlanDetailRecord]:
+        plans = select_plans(TransactionType.PLANNED_RECEIPT).as_("plans")
+        suppliers = Table("suppliers")
+        query = (
+            PostgreSQLQuery.from_(plans).join(suppliers).on(suppliers.id == plans.supplier_id)
+            .select(
+                plans.id, plans.transaction_id, plans.material_id, suppliers.id,
+                suppliers.name, plans.order_date, plans.planned_date, plans.remaining_quantity_kg,
+            )
+            .where(plans.material_id == Parameter("%s"))
+            .where(plans.remaining_quantity_kg > 0)
+            .orderby(plans.planned_date, suppliers.name, plans.transaction_id)
+        )
+        with self._connection.cursor() as cursor:
+            cursor.execute(str(query), (material_id,))
+            return [ReceiptPlanDetailRecord(*row) for row in cursor.fetchall()]
+
+    def list_formats(self, film_type_code: str) -> list[int]:
+        return self._material_values("format", film_type_code)
+
+    def list_thicknesses(self, film_type_code: str) -> list[int]:
+        return self._material_values("thickness", film_type_code)
+
+    def list_brands(self, film_type_code: str, film_format: int, thickness: int) -> list[str]:
+        return self._material_values("brand", film_type_code, film_format, thickness)
+
+    def _material_values(self, field, film_type_code, film_format=None, thickness=None):
+        materials = Table("materials")
+        film_types = Table("film_types")
+        query = (
+            PostgreSQLQuery.from_(materials).join(film_types).on(film_types.id == materials.film_type_id)
+            .select(materials[field]).distinct()
+            .where(film_types.code == Parameter("%s"))
+            .orderby(materials[field])
+        )
+        params = [film_type_code]
+        for name, value in (("format", film_format), ("thickness", thickness)):
+            if value is not None:
+                query = query.where(materials[name] == Parameter("%s"))
+                params.append(value)
+        with self._connection.cursor() as cursor:
+            cursor.execute(str(query), tuple(params))
+            return [row[0] for row in cursor.fetchall()]
 
     @staticmethod
     def _stock_query():

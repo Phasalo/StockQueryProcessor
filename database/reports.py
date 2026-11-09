@@ -1,238 +1,84 @@
-from contextlib import closing
-
-import psycopg2
-from pypika import Table, Case, PostgreSQLQuery, functions, Parameter
+from decimal import Decimal
 
 from config import WarehouseConfig
-from database import TransactionType, FilmType
-from database.repositories.reports import ReportRepository
+from database.enums import FilmType, TransactionType
+from database.repositories.reports import ReportRepository, StockRecord
 from database.unit_of_work import UnitOfWork
 
 
 class WarehouseReports:
     def __init__(self, config: WarehouseConfig):
         self._config = config
-        self._dsn = f"postgresql://{config.user}:{config.password}@{config.host}:{config.port}/{config.database}"
 
-    def get_film_type_summary(self, film_type: FilmType) -> list[dict]:
-        films = Table("films")
-        transactions = Table("transactions")
+    @staticmethod
+    def _type_code(film_type: FilmType | str) -> str:
+        return film_type.name if isinstance(film_type, FilmType) else film_type
 
-        q = (
-            PostgreSQLQuery.from_(films)
-                .left_join(transactions)
-                .on(transactions.film_id == films.id)
-                .select(
-                films.format,
-                films.thickness,
-                functions.Coalesce(
-                    functions.Sum(
-                        Case()
-                            .when(transactions.transaction_type == TransactionType.CONSUMPTION.name,
-                                  transactions.film_delta_kg)
-                            .else_(0)
-                    ),
-                    0,
-                ).as_("planned_consumption_kg"),
-                functions.Coalesce(
-                    functions.Sum(
-                        Case()
-                            .when(transactions.transaction_type == TransactionType.PLANNED_RECEIPT.name,
-                                  transactions.film_delta_kg)
-                            .else_(0)
-                    ),
-                    0,
-                ).as_("planned_receipt_kg"),
-                functions.Coalesce(
-                    functions.Sum(
-                        Case()
-                            .when(transactions.transaction_type == TransactionType.RECEIPT.name,
-                                  transactions.film_delta_kg)
-                            .when(transactions.transaction_type == TransactionType.ADJUSTMENT.name,
-                                  transactions.film_delta_kg)
-                            .when(transactions.transaction_type == TransactionType.CONSUMPTION.name,
-                                  transactions.film_delta_kg)
-                            .else_(0)
-                    ),
-                    0,
-                ).as_("free_balance_kg"),
-            )
-                .where(films.type == Parameter("%s"))
-                .groupby(films.format, films.thickness)
-                .orderby(films.format, films.thickness)
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (film_type.name,))
-                rows = cur.fetchall()
-
-        return [
-            {
-                "format": row[0],
-                "thickness": row[1],
-                "planned_consumption_kg": row[2],
-                "planned_receipt_kg": row[3],
-                "free_balance_kg": row[4],
-            }
-            for row in rows
-        ]
-
-    def get_film_summary(self, film_type: FilmType, film_format: int, thickness: int) -> dict:
-        transactions = Table("transactions")
-        films = Table("films")
-
-        q = (
-            PostgreSQLQuery.from_(transactions)
-                .join(films)
-                .on(films.id == transactions.film_id)
-                .select(
-                functions.Coalesce(
-                    functions.Sum(
-                        Case()
-                            .when(transactions.transaction_type == TransactionType.CONSUMPTION.name,
-                                  transactions.film_delta_kg)
-                            .else_(0)
-                    ),
-                    0,
-                ).as_("planned_consumption_kg"),
-                functions.Coalesce(
-                    functions.Sum(
-                        Case()
-                            .when(transactions.transaction_type == TransactionType.PLANNED_RECEIPT.name,
-                                  transactions.film_delta_kg)
-                            .else_(0)
-                    ),
-                    0,
-                ).as_("planned_receipt_kg"),
-                functions.Coalesce(
-                    functions.Sum(
-                        Case()
-                            .when(transactions.transaction_type == TransactionType.RECEIPT.name,
-                                  transactions.film_delta_kg)
-                            .when(transactions.transaction_type == TransactionType.ADJUSTMENT.name,
-                                  transactions.film_delta_kg)
-                            .when(transactions.transaction_type == TransactionType.CONSUMPTION.name,
-                                  transactions.film_delta_kg)
-                            .else_(0)
-                    ),
-                    0,
-                ).as_("free_balance_kg"),
-            )
-                .where(films.type == Parameter("%s"))
-                .where(films.format == Parameter("%s"))
-                .where(films.thickness == Parameter("%s"))
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (film_type.name, film_format, thickness))
-                row = cur.fetchone()
-
+    @staticmethod
+    def _stock_result(row: StockRecord) -> dict:
         return {
-            "planned_consumption_kg": row[0],
-            "planned_receipt_kg": row[1],
-            "free_balance_kg": row[2],
+            "material_id": row.material_id, "brand": row.brand,
+            "format": row.format, "thickness": row.thickness,
+            "on_hand_kg": row.on_hand_kg, "reserved_kg": row.reserved_kg,
+            "planned_consumption_kg": row.reserved_kg.copy_negate(),
+            "planned_receipt_kg": row.planned_receipt_kg,
+            "free_balance_kg": row.available_kg, "available_kg": row.available_kg,
+            "projected_kg": row.projected_kg,
         }
 
-    def get_planned_consumption_details(self, film_type: FilmType, film_format: int, thickness: int) -> list[dict]:
-        transactions = Table("transactions")
-        films = Table("films")
-        consumption = Table("consumption")
-        customers = Table("customers")
-
-        q = (
-            PostgreSQLQuery.from_(transactions)
-                .join(films)
-                .on(films.id == transactions.film_id)
-                .join(consumption)
-                .on(consumption.transaction_id == transactions.id)
-                .join(customers)
-                .on(customers.id == consumption.customer_id)
-                .select(
-                customers.name,
-                customers.prod_card_number,
-                transactions.film_delta_kg,
-                transactions.id,
-            )
-                .where(transactions.transaction_type == Parameter("%s"))
-                .where(films.type == Parameter("%s"))
-                .where(films.format == Parameter("%s"))
-                .where(films.thickness == Parameter("%s"))
-                .orderby(customers.name)
-                .orderby(transactions.id)
+    def _find_stock(self, repository, film_type, film_format, thickness, brand):
+        rows = repository.list_stock(
+            self._type_code(film_type), film_format=film_format, thickness=thickness, brand=brand,
         )
+        if len(rows) > 1:
+            raise ValueError("Для этой комбинации найдено несколько марок. Укажите brand.")
+        return rows[0] if rows else None
 
-        params = (
-            TransactionType.CONSUMPTION.name,
-            film_type.name,
-            film_format,
-            thickness,
-        )
+    def get_film_type_summary(self, film_type: FilmType | str) -> list[dict]:
+        with UnitOfWork(self._config) as uow:
+            rows = ReportRepository(uow.connection).list_stock(self._type_code(film_type))
+        return [self._stock_result(row) for row in rows]
 
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), params)
-                rows = cur.fetchall()
+    def get_film_summary(
+        self, film_type: FilmType | str, film_format: int, thickness: int,
+        *, brand: str | None = None,
+    ) -> dict:
+        with UnitOfWork(self._config) as uow:
+            row = self._find_stock(ReportRepository(uow.connection), film_type, film_format, thickness, brand)
+        if row is not None:
+            return self._stock_result(row)
+        return {key: Decimal("0.00") for key in (
+            "planned_consumption_kg", "planned_receipt_kg", "free_balance_kg",
+            "on_hand_kg", "reserved_kg", "available_kg", "projected_kg",
+        )}
 
-        return [
-            {
-                "customer_name": row[0],
-                "prod_card_number": row[1],
-                "delta_kg": row[2],
-            }
-            for row in rows
-        ]
+    def get_planned_consumption_details(
+        self, film_type: FilmType | str, film_format: int, thickness: int,
+        *, brand: str | None = None,
+    ) -> list[dict]:
+        with UnitOfWork(self._config) as uow:
+            repository = ReportRepository(uow.connection)
+            material = self._find_stock(repository, film_type, film_format, thickness, brand)
+            rows = repository.list_open_consumption(material.material_id) if material else []
+        return [{
+            "plan_id": row.plan_id, "transaction_id": row.transaction_id,
+            "customer_name": row.customer_name, "prod_card_number": row.prod_card_number,
+            "delta_kg": row.remaining_quantity_kg.copy_negate(),
+        } for row in rows]
 
-    def get_planned_receipt_details(self, film_type: FilmType, film_format: int, thickness: int) -> list[dict]:
-        transactions = Table("transactions")
-        films = Table("films")
-        planned_receipts = Table("planned_receipts")
-        suppliers = Table("suppliers")
-
-        q = (
-            PostgreSQLQuery.from_(transactions)
-                .join(films)
-                .on(films.id == transactions.film_id)
-                .join(planned_receipts)
-                .on(planned_receipts.transaction_id == transactions.id)
-                .join(suppliers)
-                .on(suppliers.id == planned_receipts.supplier_id)
-                .select(
-                suppliers.name,
-                planned_receipts.planned_date,
-                transactions.film_delta_kg,
-                transactions.id,
-            )
-                .where(transactions.transaction_type == Parameter("%s"))
-                .where(films.type == Parameter("%s"))
-                .where(films.format == Parameter("%s"))
-                .where(films.thickness == Parameter("%s"))
-                .orderby(planned_receipts.planned_date)
-                .orderby(suppliers.name)
-                .orderby(transactions.id)
-        )
-
-        params = (
-            TransactionType.PLANNED_RECEIPT.name,
-            film_type.name,
-            film_format,
-            thickness,
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), params)
-                rows = cur.fetchall()
-
-        return [
-            {
-                "supplier_name": row[0],
-                "planned_date": row[1],
-                "delta_kg": row[2],
-            }
-            for row in rows
-        ]
+    def get_planned_receipt_details(
+        self, film_type: FilmType | str, film_format: int, thickness: int,
+        *, brand: str | None = None,
+    ) -> list[dict]:
+        with UnitOfWork(self._config) as uow:
+            repository = ReportRepository(uow.connection)
+            material = self._find_stock(repository, film_type, film_format, thickness, brand)
+            rows = repository.list_open_receipts(material.material_id) if material else []
+        return [{
+            "plan_id": row.plan_id, "transaction_id": row.transaction_id,
+            "supplier_name": row.supplier_name, "order_date": row.order_date,
+            "planned_date": row.planned_date, "delta_kg": row.remaining_quantity_kg,
+        } for row in rows]
 
     def get_all_transactions(self) -> list[dict]:
         with UnitOfWork(self._config) as uow:
@@ -259,38 +105,14 @@ class WarehouseReports:
             for row in records
         ]
 
-    def get_available_formats(self, film_type: FilmType) -> list[int]:
-        films = Table("films")
+    def get_available_formats(self, film_type: FilmType | str) -> list[int]:
+        with UnitOfWork(self._config) as uow:
+            return ReportRepository(uow.connection).list_formats(self._type_code(film_type))
 
-        q = (
-            PostgreSQLQuery.from_(films)
-                .select(films.format)
-                .distinct()
-                .where(films.type == Parameter("%s"))
-                .orderby(films.format)
-        )
+    def get_available_thicknesses(self, film_type: FilmType | str) -> list[int]:
+        with UnitOfWork(self._config) as uow:
+            return ReportRepository(uow.connection).list_thicknesses(self._type_code(film_type))
 
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (film_type.name,))
-                rows = cur.fetchall()
-
-        return [row[0] for row in rows]
-
-    def get_available_thicknesses(self, film_type: FilmType) -> list[int]:
-        films = Table("films")
-
-        q = (
-            PostgreSQLQuery.from_(films)
-                .select(films.thickness)
-                .distinct()
-                .where(films.type == Parameter("%s"))
-                .orderby(films.thickness)
-        )
-
-        with closing(psycopg2.connect(self._dsn)) as conn:
-            with conn.cursor() as cur:
-                cur.execute(str(q), (film_type.name,))
-                rows = cur.fetchall()
-
-        return [row[0] for row in rows]
+    def get_available_brands(self, film_type: FilmType | str, film_format: int, thickness: int) -> list[str]:
+        with UnitOfWork(self._config) as uow:
+            return ReportRepository(uow.connection).list_brands(self._type_code(film_type), film_format, thickness)

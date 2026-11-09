@@ -36,7 +36,7 @@
           <label for="report-search">Поиск:</label>
           <input id="report-search" type="search" class="form-control" placeholder="Поиск по таблицам" aria-controls="{% if page_kind == 'detail' %}consumption-table receipt-table{% elif page_kind == 'summary' %}summary-table{% else %}transactions-table{% endif %}">
         </div>
-        <a id="download" class="btn btn-success btn-excel" href="{{ export_url }}">Скачать .xlsx</a>
+        <a id="download" class="btn btn-success btn-excel{% if not export_url %} disabled{% endif %}" {% if export_url %}href="{{ export_url }}"{% else %}aria-disabled="true"{% endif %}>Скачать .xlsx</a>
       </section>
       {% block filters %}{% endblock %}
     </div>

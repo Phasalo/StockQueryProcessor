@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from flask import Blueprint, abort, redirect, render_template, send_file, url_for
+from flask import Blueprint, abort, redirect, render_template, request, send_file, url_for
 
 from database.enums import FilmType, TransactionType
 from . import reports
@@ -44,6 +44,16 @@ def spreadsheet(sheets, name, parameters=None):
     return response
 
 
+def select_brand(ft, film_format, thickness):
+    brands = reports.get_available_brands(ft, film_format, thickness)
+    selected = request.args.get("brand")
+    if selected is not None and selected not in brands:
+        abort(404)
+    if selected is None and len(brands) == 1:
+        selected = brands[0]
+    return brands, selected
+
+
 @ui.get("/")
 def home():
     return render_template("home.html", page_title="Склад плёнки", page_kind="home")
@@ -55,7 +65,7 @@ def first_film():
     if not rows:
         return render_template("error.html", page_title="Нет записей", message="Для этого типа плёнок нет записей", page_kind="error")
     first = rows[0]
-    return redirect(url_for("ui.detail", raw="BOPP", film_format=first["format"], thickness=first["thickness"]))
+    return redirect(url_for("ui.detail", raw="BOPP", film_format=first["format"], thickness=first["thickness"], brand=first.get("brand")))
 
 
 @ui.get("/film-type/<raw>")
@@ -71,17 +81,21 @@ def summary(raw):
 def detail(raw, film_format, thickness):
     ft = film_type(raw)
     args = ft, film_format, thickness
+    brands, brand = select_brand(*args)
+    ambiguous = brand is None and len(brands) > 1
+    selection = {"brand": brand} if brand is not None else {}
     return render_template("detail.html", page_title="Детализация плёнки", page_kind="detail",
                            film_types=FILM_TYPES, selected_type=ft.name,
                            formats=[(value, value) for value in reports.get_available_formats(ft)],
                            thicknesses=[(value, value) for value in reports.get_available_thicknesses(ft)],
                            selected_format=film_format, selected_thickness=thickness,
-                           summary=reports.get_film_summary(*args),
+                           brands=brands, selected_brand=brand,
+                           summary=None if ambiguous else reports.get_film_summary(*args, **selection),
                            consumption_columns=CONSUMPTION_COLUMNS,
-                           consumption_rows=reports.get_planned_consumption_details(*args),
+                           consumption_rows=[] if ambiguous else reports.get_planned_consumption_details(*args, **selection),
                            receipt_columns=RECEIPT_COLUMNS,
-                           receipt_rows=reports.get_planned_receipt_details(*args),
-                           export_url=url_for("ui.export_detail", raw=raw, film_format=film_format, thickness=thickness))
+                           receipt_rows=[] if ambiguous else reports.get_planned_receipt_details(*args, **selection),
+                           export_url=None if ambiguous else url_for("ui.export_detail", raw=raw, film_format=film_format, thickness=thickness, **selection))
 
 
 @ui.get("/transactions")
@@ -101,17 +115,24 @@ def export_summary(raw):
 @ui.get("/exports/film-type/<raw>/<int:film_format>/<int:thickness>")
 def export_detail(raw, film_format, thickness):
     args = film_type(raw), film_format, thickness
-    summary_rows = reports.get_film_summary(*args)
+    brands, brand = select_brand(*args)
+    if brand is None and len(brands) > 1:
+        abort(400, description="Выберите марку для выгрузки.")
+    selection = {"brand": brand} if brand is not None else {}
+    summary_rows = reports.get_film_summary(*args, **selection)
     summary_columns = [column("Σ Планируемый расход", "planned_consumption_kg", "kg"),
                        column("Свободный остаток", "free_balance_kg", "kg"),
-                       column("Σ Планируемый приход", "planned_receipt_kg", "kg")]
+                       column("Σ Планируемый приход", "planned_receipt_kg", "kg"),
+                       column("Физический остаток", "on_hand_kg", "kg"),
+                       column("Прогнозный остаток", "projected_kg", "kg")]
+    parameters = [f"Тип плёнки: {args[0].value}", f"Формат: {film_format} мм", f"Толщина: {thickness} мкм"]
+    if brand is not None:
+        parameters.append(f"Марка: {brand}")
     return spreadsheet([
         ("Сводка", summary_columns, [summary_rows]),
-        ("План расхода", CONSUMPTION_COLUMNS, reports.get_planned_consumption_details(*args)),
-        ("План прихода", RECEIPT_COLUMNS, reports.get_planned_receipt_details(*args)),
-    ], f"{raw}-{film_format}-{thickness}", parameters=[
-        f"Тип плёнки: {args[0].value}", f"Формат: {film_format} мм", f"Толщина: {thickness} мкм",
-    ])
+        ("План расхода", CONSUMPTION_COLUMNS, reports.get_planned_consumption_details(*args, **selection)),
+        ("План прихода", RECEIPT_COLUMNS, reports.get_planned_receipt_details(*args, **selection)),
+    ], f"{raw}-{film_format}-{thickness}", parameters=parameters)
 
 
 @ui.get("/exports/transactions")

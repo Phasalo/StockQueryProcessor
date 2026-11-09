@@ -25,8 +25,9 @@ function busy(value) {
     document.querySelector('main').setAttribute('aria-busy', String(value));
     document.querySelectorAll('select, #report-search').forEach(element => { element.disabled = value; });
     const download = document.getElementById('download');
-    download?.classList.toggle('disabled', value);
-    download?.setAttribute('aria-disabled', String(value));
+    const unavailable = value || !download?.hasAttribute('href');
+    download?.classList.toggle('disabled', unavailable);
+    download?.setAttribute('aria-disabled', String(unavailable));
 }
 
 async function loadPage() {
@@ -62,10 +63,18 @@ async function loadPage() {
 
 document.addEventListener('change', event => {
     if (!event.target.matches('.report-filters select')) return;
+    const next = new URL(location.href);
+    if (event.target.id === 'film-brand') {
+        next.searchParams.set('brand', event.target.value);
+        history.pushState(null, '', next.pathname + next.search);
+        loadPage();
+        return;
+    }
     const parts = location.pathname.split('/');
     const index = {'film-type': 2, 'film-format': 3, 'film-thickness': 4}[event.target.id];
     parts[index] = encodeURIComponent(event.target.value);
-    history.pushState(null, '', parts.join('/'));
+    next.searchParams.delete('brand');
+    history.pushState(null, '', parts.join('/') + next.search);
     loadPage();
 });
 

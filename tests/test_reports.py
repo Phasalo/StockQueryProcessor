@@ -83,6 +83,14 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
         with UnitOfWork(self.config) as uow:
             with uow.connection.cursor() as cursor:
                 cursor.execute("TRUNCATE transactions RESTART IDENTITY CASCADE")
+                cursor.execute(
+                    "DELETE FROM materials WHERE id NOT IN (%s, %s)",
+                    (self.material_id, self.other_material_id),
+                )
+                cursor.execute(
+                    "DELETE FROM film_types WHERE code NOT IN "
+                    "('BOPP', 'BOPP_PEARL', 'BOPP_METAL', 'CPP', 'LDPE_HALF_SLEEVE', 'LDPE_FLAT_SHEET')"
+                )
 
     def journal(self):
         with UnitOfWork(self.config) as uow:
@@ -93,6 +101,128 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
             return ReportRepository(uow.connection).get_stock(
                 self.material_id if material_id is None else material_id,
             )
+
+    def test_summary_facade_keeps_brands_separate_and_legacy_quantity_signs(self):
+        with UnitOfWork(self.config) as uow:
+            movements = MovementRepository(uow.connection)
+            movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("100"))
+            movements.add_issue(self.material_id, self.customer_id, None, Decimal("-20"))
+            movements.add_receipt(self.other_material_id, self.supplier_id, self.actual_date, Decimal("7"))
+            plans = PlanRepository(uow.connection)
+            outgoing = plans.add_consumption(self.material_id, self.customer_id, Decimal("-30"))
+            incoming = plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("40"))
+            for plan in (outgoing, incoming):
+                plans.cancel(plan.transaction_id, Decimal("10"), "Partial")
+            plans.add_consumption(self.other_material_id, self.customer_id, Decimal("-200"))
+        reports = WarehouseReports(self.config)
+        rows = reports.get_film_type_summary(FilmType.BOPP)
+        self.assertEqual([row["brand"] for row in rows], ["Brand", "Other"])
+        self.assertEqual([row["free_balance_kg"] for row in rows], [Decimal("60"), Decimal("-193")])
+        summary = reports.get_film_summary("BOPP", 1200, 25, brand="Brand")
+        self.assertEqual(summary["material_id"], self.material_id)
+        self.assertEqual(summary["on_hand_kg"], Decimal("80"))
+        self.assertEqual(summary["reserved_kg"], Decimal("20"))
+        self.assertEqual(summary["planned_consumption_kg"], Decimal("-20"))
+        self.assertEqual(summary["planned_receipt_kg"], Decimal("30"))
+        self.assertEqual(summary["free_balance_kg"], Decimal("60"))
+        self.assertEqual(summary["projected_kg"], Decimal("90"))
+        with localcontext() as context:
+            context.prec = 1
+            self.assertEqual(reports.get_film_summary("BOPP", 1200, 25, brand="Brand"), summary)
+        for method in (reports.get_film_summary, reports.get_planned_consumption_details, reports.get_planned_receipt_details):
+            with self.assertRaisesRegex(ValueError, "brand"):
+                method(FilmType.BOPP, 1200, 25)
+
+    def test_plan_details_match_open_totals_without_limit_or_closed_plans(self):
+        with UnitOfWork(self.config) as uow:
+            plans = PlanRepository(uow.connection)
+            outgoing = plans.add_consumption(self.material_id, self.customer_id, Decimal("-80"))
+            incoming = plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("100"))
+            for plan in (outgoing, incoming):
+                plans.cancel(plan.transaction_id, Decimal("10"), "First")
+                plans.cancel(plan.transaction_id, Decimal("15"), "Second")
+            cancelled = plans.add_consumption(self.material_id, self.customer_id, Decimal("-5"))
+            plans.cancel(cancelled.transaction_id, Decimal("5"), "All")
+            executed = plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("5"))
+            MovementRepository(uow.connection).add_receipt(
+                self.material_id, self.supplier_id, self.actual_date, Decimal("1"), planned_receipt_id=executed.id,
+            )
+            for _ in range(12):
+                plans.add_consumption(self.material_id, self.customer_id, Decimal("-1"))
+                plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("1"))
+            plans.add_consumption(self.other_material_id, self.customer_id, Decimal("-500"))
+        reports = WarehouseReports(self.config)
+        outgoing_rows = reports.get_planned_consumption_details("BOPP", 1200, 25, brand="Brand")
+        incoming_rows = reports.get_planned_receipt_details("BOPP", 1200, 25, brand="Brand")
+        self.assertEqual(len(outgoing_rows), 13)
+        self.assertEqual(len(incoming_rows), 13)
+        self.assertEqual(outgoing_rows[0]["plan_id"], outgoing.id)
+        self.assertEqual(outgoing_rows[0]["transaction_id"], outgoing.transaction_id)
+        self.assertEqual(outgoing_rows[0]["prod_card_number"], "000123")
+        self.assertEqual(outgoing_rows[0]["delta_kg"], Decimal("-55"))
+        self.assertEqual(incoming_rows[0]["plan_id"], incoming.id)
+        self.assertEqual(incoming_rows[0]["order_date"], self.order_date)
+        self.assertEqual(incoming_rows[0]["planned_date"], self.planned_date)
+        self.assertEqual(incoming_rows[0]["delta_kg"], Decimal("75"))
+        summary = reports.get_film_summary("BOPP", 1200, 25, brand="Brand")
+        self.assertEqual(sum(row["delta_kg"] for row in outgoing_rows), summary["planned_consumption_kg"])
+        self.assertEqual(sum(row["delta_kg"] for row in incoming_rows), summary["planned_receipt_kg"])
+
+    def test_missing_material_combination_returns_empty_reports(self):
+        reports = WarehouseReports(self.config)
+        self.assertTrue(all(value == Decimal("0") for value in reports.get_film_summary("BOPP", 999, 999).values()))
+        self.assertEqual(reports.get_planned_consumption_details("BOPP", 999, 999), [])
+        self.assertEqual(reports.get_planned_receipt_details("BOPP", 999, 999), [])
+        self.assertEqual(reports.get_film_type_summary("MISSING"), [])
+        self.assertEqual(reports.get_available_formats("MISSING"), [])
+        self.assertEqual(reports.get_available_thicknesses("MISSING"), [])
+
+    def test_size_and_brand_lists_are_distinct_and_empty_brand_is_selectable(self):
+        with UnitOfWork(self.config) as uow:
+            film_type = FilmTypeRepository(uow.connection).find_by_code("BOPP")
+            materials = MaterialRepository(uow.connection)
+            materials.add(film_type.id, "A&B / <tag>", 1400, 30)
+            empty_brand = materials.add(film_type.id, "", 1500, 40)
+            materials.add(film_type.id, "Named", 1500, 40)
+        reports = WarehouseReports(self.config)
+        self.assertEqual(reports.get_available_formats(FilmType.BOPP), [1200, 1400, 1500])
+        self.assertEqual(reports.get_available_thicknesses("BOPP"), [25, 30, 40])
+        self.assertEqual(reports.get_available_brands("BOPP", 1200, 25), ["Brand", "Other"])
+        self.assertEqual(reports.get_available_brands("BOPP", 1400, 30), ["A&B / <tag>"])
+        self.assertEqual(reports.get_film_summary("BOPP", 1500, 40, brand="")["material_id"], empty_brand)
+        with patch("app.views.reports", reports):
+            self.assertEqual(app.test_client().get("/film-type/BOPP/1500/40?brand=").status_code, 200)
+
+    def test_summary_detail_and_exports_read_real_database_for_selected_brand(self):
+        with UnitOfWork(self.config) as uow:
+            movements = MovementRepository(uow.connection)
+            movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("100"))
+            movements.add_receipt(self.other_material_id, self.supplier_id, self.actual_date, Decimal("7"))
+            PlanRepository(uow.connection).add_consumption(self.material_id, self.customer_id, Decimal("-20"))
+        reports = WarehouseReports(self.config)
+        with patch("app.views.reports", reports):
+            client = app.test_client()
+            summary = client.get("/film-type/BOPP")
+            self.assertEqual(summary.status_code, 200)
+            self.assertIn("?brand=Brand", summary.text)
+            self.assertIn("?brand=Other", summary.text)
+            self.assertIn("Выберите марку", client.get("/film-type/BOPP/1200/25").text)
+            detail = client.get("/film-type/BOPP/1200/25?brand=Brand")
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn("80,00 кг", detail.text)
+            self.assertIn("Физический остаток", detail.text)
+            self.assertEqual(client.get("/exports/film-type/BOPP/1200/25").status_code, 400)
+            response = client.get("/exports/film-type/BOPP/1200/25?brand=Brand")
+            self.assertEqual(response.status_code, 200)
+            book = load_workbook(BytesIO(response.data))
+            self.assertEqual(book["Сводка"]["D1"].value, "Марка: Brand")
+            self.assertEqual(book["Сводка"]["B4"].value, 80)
+            self.assertEqual(book["План расхода"]["C4"].value, -20)
+            response = client.get("/exports/film-type/BOPP")
+            self.assertEqual(response.status_code, 200)
+            sheet = load_workbook(BytesIO(response.data)).active
+            self.assertEqual([sheet["A4"].value, sheet["A5"].value], ["Brand", "Other"])
+            self.assertEqual([sheet["F4"].value, sheet["F5"].value], [80, 7])
 
     def test_stock_for_material_without_transactions_has_decimal_zeros(self):
         record = self.stock()

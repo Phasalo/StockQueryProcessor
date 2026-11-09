@@ -28,6 +28,7 @@ class InterfaceTest(unittest.TestCase):
             "get_planned_receipt_details": [],
             "get_available_formats": [1200],
             "get_available_thicknesses": [25],
+            "get_available_brands": [],
             "get_all_transactions": [],
         }
         for name, value in defaults.items():
@@ -127,10 +128,34 @@ class InterfaceTest(unittest.TestCase):
         sheet = book.active
         self.assertEqual(sheet["A1"].value, "Тип плёнки: Прозрачный BOPP")
         self.assertEqual(sheet.max_row, 33)
-        self.assertEqual(sheet.max_column, 5)
-        self.assertEqual(sheet["C4"].value, -12.5)
-        self.assertEqual(sheet["C4"].data_type, "n")
-        self.assertEqual(sheet["C4"].number_format, "0.00")
+        self.assertEqual(sheet.max_column, 8)
+        self.assertEqual(sheet["D4"].value, -12.5)
+        self.assertEqual(sheet["D4"].data_type, "n")
+        self.assertEqual(sheet["D4"].number_format, "0.00")
+
+    def test_ambiguous_detail_requires_brand_and_disables_export(self):
+        with patch.object(reports, "get_available_brands", return_value=["Brand", "Other"]), \
+             patch.object(reports, "get_film_summary") as summary:
+            response = self.client.get("/film-type/BOPP/1200/25")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Выберите марку", response.text)
+            self.assertIn('aria-disabled="true"', response.text)
+            self.assertNotIn('href="/exports/film-type/BOPP/1200/25"', response.text)
+            self.assertEqual(self.client.get("/exports/film-type/BOPP/1200/25").status_code, 400)
+            self.assertEqual(self.client.get("/film-type/BOPP/1200/25?brand=Missing").status_code, 404)
+            summary.assert_not_called()
+
+    def test_selected_brand_is_passed_to_reports_and_export_link(self):
+        with patch.object(reports, "get_available_brands", return_value=["A&B", "Other"]), \
+             patch.object(reports, "get_film_summary", return_value=self.summary) as summary, \
+             patch.object(reports, "get_planned_consumption_details", return_value=[]) as outgoing, \
+             patch.object(reports, "get_planned_receipt_details", return_value=[]) as incoming:
+            response = self.client.get("/film-type/BOPP/1200/25?brand=A%26B")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('value="A&amp;B" selected', response.text)
+            self.assertIn('href="/exports/film-type/BOPP/1200/25?brand=A%26B"', response.text)
+            for method in (summary, outgoing, incoming):
+                method.assert_called_once_with(FilmType.BOPP, 1200, 25, brand="A&B")
 
     def test_detail_export(self):
         with patch.object(reports, "get_film_summary", return_value=self.summary), \
@@ -142,7 +167,7 @@ class InterfaceTest(unittest.TestCase):
             book = self.workbook("/exports/film-type/BOPP/1200/25", timestamp_row=2)
         self.assertEqual(book.sheetnames, ["Сводка", "План расхода", "План прихода"])
         for sheet in book:
-            self.assertEqual([cell.value for cell in sheet[1]], [
+            self.assertEqual([cell.value for cell in sheet[1]][:3], [
                 "Тип плёнки: Прозрачный BOPP", "Формат: 1200 мм", "Толщина: 25 мкм",
             ])
         self.assertEqual(book["Сводка"]["A3"].value, "Σ Планируемый расход")
