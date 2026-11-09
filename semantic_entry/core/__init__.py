@@ -1,4 +1,8 @@
-from semantic_entry.core.contracts import CommandEffect, CommandModel, CommandSpec
+from semantic_entry.core.catalog import CommandCatalog
+from semantic_entry.core.contracts import Actor, CommandEffect, CommandModel, CommandSpec, PermissionDenied
 from semantic_entry.core.registry import CommandRegistry
 
-__all__ = ["CommandEffect", "CommandModel", "CommandSpec", "CommandRegistry"]
+__all__ = [
+    "Actor", "CommandCatalog", "CommandEffect", "CommandModel", "CommandSpec",
+    "CommandRegistry", "PermissionDenied",
+]
