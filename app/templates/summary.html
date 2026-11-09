@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% from '_data_block.html' import data_block %}
+{% from '_header_fields.html' import header_field %}
+{% from '_datatable.html' import datatable %}
+{% block subtitle %}<p class="text-secondary">Нажмите на строку, чтобы открыть детализацию.</p>{% endblock %}
+{% block filters %}
+  <div class="report-filters">
+    {{ header_field('film-type', 'Тип плёнки', film_types, selected_type) }}
+  </div>
+{% endblock %}
+{% block body %}
+  {{ data_block('', datatable('summary-table', columns, rows, empty_message='Для этого типа плёнок нет записей', link_type=selected_type)) }}
+{% endblock %}

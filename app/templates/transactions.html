@@ -1,0 +1,6 @@
+{% extends 'base.html' %}
+{% from '_data_block.html' import data_block %}
+{% from '_datatable.html' import datatable %}
+{% block body %}
+  {{ data_block('', datatable('transactions-table', columns, rows, empty_message='Транзакций пока нет')) }}
+{% endblock %}

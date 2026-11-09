@@ -1,0 +1,120 @@
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 32px;
+  --space-5: 64px;
+}
+
+/* Reset component spacing before applying the shared scale. */
+.report-page,
+.report-page :where(*) {
+  margin: 0;
+  padding: 0;
+}
+
+.report-page {
+  margin-inline: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.page-heading,
+.report-controls,
+.report-results {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.page-header,
+.data-block {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.report-data {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.report-nav,
+.report-toolbar,
+.report-filters,
+.report-field,
+.report-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.report-nav { gap: var(--space-2); }
+.report-toolbar,
+.report-filters { gap: var(--space-3) var(--space-4); }
+.report-toolbar { justify-content: space-between; }
+.report-links { gap: var(--space-3); }
+.report-field { gap: var(--space-1); max-width: 100%; }
+
+.report-page .btn,
+.report-page .form-control,
+.report-page .form-select {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+}
+
+.report-field .form-control,
+.report-field .form-select {
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.report-page .form-select {
+  padding-inline-end: var(--space-4);
+  background-position: right var(--space-2) center;
+}
+
+.report-page table.dataTable {
+  margin: 0 !important;
+  border-spacing: 0;
+}
+
+.report-page table.dataTable > tbody > tr > td,
+.report-page table.dataTable > thead > tr > th {
+  padding: var(--space-2) var(--space-3);
+}
+
+.report-page table.dataTable > thead > tr > th {
+  padding-inline-end: var(--space-4);
+}
+
+.report-page table.dataTable > tbody > tr > td.dataTables_empty {
+  padding: var(--space-3);
+}
+
+#status:empty { display: none; }
+tr[data-href] { cursor: pointer; }
+
+.btn-excel {
+  --bs-btn-bg: #217346;
+  --bs-btn-border-color: #217346;
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: #185c37;
+  --bs-btn-hover-border-color: #185c37;
+  --bs-btn-active-bg: #12472a;
+  --bs-btn-active-border-color: #12472a;
+  --bs-btn-disabled-bg: #217346;
+  --bs-btn-disabled-border-color: #217346;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+
+table.table-hover > tbody > tr:hover > td.dataTables_empty {
+  --bs-table-bg-state: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+
+@media (max-width: 575.98px) {
+  .report-page { padding: var(--space-3); }
+}

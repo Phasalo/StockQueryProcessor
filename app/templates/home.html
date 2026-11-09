@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% from '_data_block.html' import data_block %}
+{% block body %}
+  {% set links %}
+    <div class="report-links">
+    <a class="btn btn-primary" href="{{ url_for('ui.summary', raw='BOPP') }}">Тип плёнки — сводка</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('ui.first_film') }}">Детализация плёнки</a>
+    </div>
+  {% endset %}
+  {{ data_block('Отчёты по складу', links) }}
+{% endblock %}

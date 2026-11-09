@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% from '_data_block.html' import data_block %}
+{% from '_header_fields.html' import header_field %}
+{% from '_datatable.html' import datatable %}
+{% block filters %}
+  <div class="report-filters">
+    {{ header_field('film-type', 'Тип плёнки', film_types, selected_type) }}
+    {{ header_field('film-format', 'Формат, мм', formats, selected_format) }}
+    {{ header_field('film-thickness', 'Толщина, мкм', thicknesses, selected_thickness) }}
+  </div>
+{% endblock %}
+{% block body %}
+  {% set balance %}Свободный остаток: <strong>{{ summary.free_balance_kg|report_value('kg', with_unit=true) }}</strong>{% endset %}
+  {% set consumption %}Σ Планируемый расход: <strong>{{ summary.planned_consumption_kg|report_value('kg', with_unit=true) }}</strong>{% endset %}
+  {% set receipt %}Σ Планируемый приход: <strong>{{ summary.planned_receipt_kg|report_value('kg', with_unit=true) }}</strong>{% endset %}
+  {{ data_block(balance) }}
+  {{ data_block(consumption, datatable('consumption-table', consumption_columns, consumption_rows, empty_message='Нет запланированного расхода')) }}
+  {{ data_block(receipt, datatable('receipt-table', receipt_columns, receipt_rows, empty_message='Нет запланированного прихода')) }}
+{% endblock %}
