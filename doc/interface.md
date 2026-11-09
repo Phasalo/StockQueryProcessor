@@ -1,10 +1,12 @@
 # Интерфейс склада
 
-Запуск из корня проекта:
+Запуск из корня проекта с установленным uv. Версия Python указана в `.python-version`, зависимости — в `pyproject.toml` и `uv.lock`:
 
-```powershell
-.venv/Scripts/python.exe -m pip install -r requirements.txt
-.venv/Scripts/python.exe main.py
+При сборке `psycopg2` из исходников нужен `pg_config` из PostgreSQL в `PATH`. Для PostgreSQL 16 из Homebrew: `export PATH="$(brew --prefix postgresql@16)/bin:$PATH"`.
+
+```sh
+uv sync --locked
+uv run --locked python main.py
 ```
 
 Открыть `http://localhost:5000/`. Настройки PostgreSQL находятся в `config.py`, пароль — в `.env` (`POSTGRESQL_PASSWORD`). Flask напрямую вызывает `WarehouseReports` и передаёт данные в Jinja. Отдельного JSON API нет. Приложение только читает данные.
@@ -34,6 +36,6 @@
 
 Проверки без подключения к PostgreSQL:
 
-```powershell
-.venv/Scripts/python.exe -m unittest discover -s tests -v
+```sh
+uv run --locked python -m unittest discover -s tests -v
 ```

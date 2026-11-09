@@ -1,8 +1,8 @@
 # Миграции PostgreSQL
 
-Изменения схемы и начальных данных оформляются SQL-миграциями через `yandex-pgmigrate`. Версия инструмента закреплена в [requirements.txt](../requirements.txt), конфигурация находится в [migrations.yml](../migrations.yml), SQL-файлы — в [migrations/](../migrations/).
+Изменения схемы и начальных данных оформляются SQL-миграциями через `yandex-pgmigrate`. Версия инструмента задана в [pyproject.toml](../pyproject.toml), точные версии зависимостей — в [uv.lock](../uv.lock), конфигурация находится в [migrations.yml](../migrations.yml), SQL-файлы — в [migrations/](../migrations/).
 
-Команды выполнять из корня проекта после установки зависимостей. База PostgreSQL должна существовать до запуска миграций. Подключение задаётся стандартными переменными PostgreSQL:
+Команды выполнять из корня проекта после `uv sync --locked`. База PostgreSQL должна существовать до запуска миграций. Подключение задаётся стандартными переменными PostgreSQL:
 
 ```sh
 export PGHOST=localhost
@@ -16,9 +16,9 @@ export PGUSER=postgres
 Посмотреть версии, проверить ожидающие миграции без сохранения и применить их:
 
 ```sh
-.venv/bin/pgmigrate -d . -t latest --check_serial_versions info
-.venv/bin/pgmigrate -d . -t latest --check_serial_versions -n migrate
-.venv/bin/pgmigrate -d . -t latest --check_serial_versions migrate
+uv run --locked pgmigrate -d . -t latest --check_serial_versions info
+uv run --locked pgmigrate -d . -t latest --check_serial_versions -n migrate
+uv run --locked pgmigrate -d . -t latest --check_serial_versions migrate
 ```
 
 Миграции выполняются в схеме `public`; конфигурация явно задаёт `search_path`. Флаг `--check_serial_versions` запрещает пропуски номеров версий. В CLI версии 1.0.13 его нужно передавать явно: значение аргумента по умолчанию перекрывает булевую настройку YAML.
@@ -42,7 +42,7 @@ export PGUSER=postgres
 Для тестов явно задать `TEST_DATABASE_DSN` с параметрами тестовой PostgreSQL:
 
 ```sh
-.venv/bin/python -m unittest discover -s tests -p test_migrations.py -v
+uv run --locked python -m unittest discover -s tests -p test_migrations.py -v
 ```
 
 Пользователю тестового подключения требуется право создавать базы. Каждый тест создаёт отдельную временную БД, запускает настоящий CLI `pgmigrate` и удаляет БД после проверки. Без `TEST_DATABASE_DSN` интеграционные тесты пропускаются.
