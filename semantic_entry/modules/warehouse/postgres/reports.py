@@ -6,9 +6,9 @@ from psycopg2.extensions import connection
 from psycopg2.extras import RealDictCursor
 from pypika import Order, Parameter, PostgreSQLQuery, Table, functions
 
-from database.enums import TransactionType
-from database.repositories.plan_queries import select_plans
+from semantic_entry.modules.warehouse.enums import TransactionType
 from semantic_entry.modules.warehouse.models import StockBalance
+from semantic_entry.modules.warehouse.postgres.plan_queries import select_plans
 
 
 @dataclass(frozen=True)

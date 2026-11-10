@@ -30,7 +30,7 @@ class WarehouseStockQueryTest(unittest.TestCase):
         self.actor = Actor("stock-reader")
 
     def test_invalid_material_id_is_rejected_before_connection(self):
-        with patch("database.unit_of_work.create_connection") as connect:
+        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
             for payload in ({}, {"material_id": True}, {"material_id": 0}, {"material_id": -1}, {"material_id": "1"}, {"material_id": 1, "extra": 1}):
                 with self.subTest(payload=payload):
                     with self.assertRaises(ValidationError):
@@ -39,7 +39,7 @@ class WarehouseStockQueryTest(unittest.TestCase):
 
     def test_permission_is_checked_before_connection(self):
         self.authorizer.is_allowed.return_value = False
-        with patch("database.unit_of_work.create_connection") as connect:
+        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
             with self.assertRaises(PermissionDeniedError):
                 self.executor.query("warehouse.get_stock", 1, {"material_id": 1}, self.actor)
             connect.assert_not_called()
@@ -47,7 +47,7 @@ class WarehouseStockQueryTest(unittest.TestCase):
 
     def test_prepare_validates_warehouse_input_without_connection(self):
         preparer = CommandPreparer(self.catalog)
-        with patch("database.unit_of_work.create_connection") as connect:
+        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
             missing = preparer.prepare("warehouse.get_stock", 1, {}, self.actor)
             valid = preparer.prepare("warehouse.get_stock", 1, {"material_id": 42}, self.actor)
             self.assertEqual(missing.missing_fields, (("material_id",),))
@@ -77,7 +77,6 @@ assert GET_STOCK_SPEC.validate_input({'material_id': 42}).material_id == 42
 '''
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
 
 if __name__ == "__main__":
     unittest.main()

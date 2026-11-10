@@ -16,17 +16,17 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
-from database import Warehouse
-from database.connection import create_connection
-from database.repositories.catalog import (
+from semantic_entry.modules.warehouse.postgres.catalog import (
     CustomerRepository,
     FilmTypeRepository,
     MaterialRepository,
     SupplierRepository,
 )
-from database.repositories.plans import PlanRepository
-from database.repositories.transactions import TransactionRepository
-from database.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
+from semantic_entry.modules.warehouse.postgres.transactions import TransactionRepository
+from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.service import Warehouse
 
 
 class PlanRepositoryPostgresTest(unittest.TestCase):

@@ -2,13 +2,13 @@ import unittest
 from unittest.mock import patch
 
 from config import WarehouseConfig
-from database import Warehouse
+from semantic_entry.modules.warehouse.service import Warehouse
 
 
 class WarehouseInitializationTest(unittest.TestCase):
     def test_constructor_does_not_connect_or_create_schema(self):
         with patch(
-            "database.unit_of_work.create_connection",
+            "semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection",
             side_effect=AssertionError("Warehouse must not connect during initialization"),
         ) as connect:
             Warehouse(WarehouseConfig())

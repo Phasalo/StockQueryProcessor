@@ -9,8 +9,8 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
-from database.connection import create_connection
-from database.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 
 class UnitOfWorkLifecycleTest(unittest.TestCase):
@@ -19,7 +19,7 @@ class UnitOfWorkLifecycleTest(unittest.TestCase):
 
     def test_connection_factory_passes_credentials_as_parameters(self):
         config = WarehouseConfig(password="password@with:/?#symbols")
-        with patch("database.connection.psycopg2.connect") as connect:
+        with patch("semantic_entry.modules.warehouse.postgres.connection.psycopg2.connect") as connect:
             self.assertIs(create_connection(config), connect.return_value)
         connect.assert_called_once_with(
             dbname=config.database,
@@ -30,7 +30,7 @@ class UnitOfWorkLifecycleTest(unittest.TestCase):
         )
 
     def test_connection_opens_only_inside_context(self):
-        with patch("database.unit_of_work.create_connection") as connect:
+        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
             uow = UnitOfWork(self.config)
             connect.assert_not_called()
             with uow:
@@ -50,7 +50,7 @@ class UnitOfWorkLifecycleTest(unittest.TestCase):
                     operation()
 
     def test_nested_reentry_preserves_outer_connection(self):
-        with patch("database.unit_of_work.create_connection") as connect:
+        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
             with UnitOfWork(self.config) as uow:
                 with self.assertRaises(RuntimeError):
                     with uow:
@@ -60,7 +60,7 @@ class UnitOfWorkLifecycleTest(unittest.TestCase):
             connect.return_value.close.assert_called_once()
 
     def test_rollback_failure_still_closes_connection(self):
-        with patch("database.unit_of_work.create_connection") as connect:
+        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
             connect.return_value.rollback.side_effect = psycopg2.OperationalError(
                 "Connection lost"
             )
@@ -73,7 +73,7 @@ class UnitOfWorkLifecycleTest(unittest.TestCase):
             _ = uow.connection
 
     def test_commit_failure_propagates_and_closes_connection(self):
-        with patch("database.unit_of_work.create_connection") as connect:
+        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
             connect.return_value.commit.side_effect = psycopg2.OperationalError(
                 "Commit failed"
             )
@@ -88,7 +88,7 @@ class UnitOfWorkLifecycleTest(unittest.TestCase):
             _ = uow.connection
 
     def test_base_exception_rolls_back_and_closes_connection(self):
-        with patch("database.unit_of_work.create_connection") as connect:
+        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
             with self.assertRaises(KeyboardInterrupt):
                 with UnitOfWork(self.config):
                     raise KeyboardInterrupt()

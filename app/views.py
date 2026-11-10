@@ -10,7 +10,7 @@ from flask import (
     url_for,
 )
 
-from database.enums import FilmType, TransactionType
+from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
 
 from . import reports
 from .ui_schema import (

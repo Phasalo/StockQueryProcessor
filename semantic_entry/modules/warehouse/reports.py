@@ -3,9 +3,9 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from database.enums import FilmType, TransactionType
-from database.repositories.reports import ReportRepository
-from database.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
+from semantic_entry.modules.warehouse.postgres.reports import ReportRepository
+from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 if TYPE_CHECKING:
     from config import WarehouseConfig

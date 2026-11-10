@@ -12,9 +12,8 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
-from database import FilmType, Warehouse
-from database.connection import create_connection
-from database.repositories.catalog import (
+from semantic_entry.modules.warehouse.enums import FilmType
+from semantic_entry.modules.warehouse.postgres.catalog import (
     CustomerRecord,
     CustomerRepository,
     FilmTypeRecord,
@@ -24,7 +23,9 @@ from database.repositories.catalog import (
     SupplierRecord,
     SupplierRepository,
 )
-from database.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.service import Warehouse
 
 
 class CatalogPostgresTest(unittest.TestCase):

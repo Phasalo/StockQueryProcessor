@@ -17,23 +17,23 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
-from database import Warehouse
-from database.connection import create_connection
-from database.enums import TransactionType
-from database.repositories.catalog import (
+from semantic_entry.modules.warehouse.enums import TransactionType
+from semantic_entry.modules.warehouse.postgres.catalog import (
     CustomerRepository,
     FilmTypeRepository,
     MaterialRepository,
     SupplierRepository,
 )
-from database.repositories.movements import (
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.movements import (
     IssueRecord,
     MovementRepository,
     ReceiptRecord,
 )
-from database.repositories.plans import PlanRepository
-from database.repositories.transactions import TransactionRepository
-from database.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
+from semantic_entry.modules.warehouse.postgres.transactions import TransactionRepository
+from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.service import Warehouse
 
 
 class MovementRepositoryPostgresTest(unittest.TestCase):
@@ -200,7 +200,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
         with UnitOfWork(self.config) as holder:
             with holder.connection.cursor() as cursor:
                 cursor.execute("SELECT id FROM materials WHERE id = %s FOR UPDATE", (self.material_id,))
-            with patch("database.unit_of_work.create_connection", side_effect=open_with_timeout):
+            with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection", side_effect=open_with_timeout):
                 with self.assertRaises(psycopg2.errors.LockNotAvailable):
                     Warehouse(self.config).create_adjustment(self.material_id, Decimal("10"))
         self.assertEqual(self.count_rows("transactions"), 0)

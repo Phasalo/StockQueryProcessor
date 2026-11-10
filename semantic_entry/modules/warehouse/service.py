@@ -3,23 +3,26 @@ from datetime import date
 from decimal import Decimal
 
 from config import WarehouseConfig
-from database.enums import FilmType, TransactionType
-from database.repositories.catalog import (
+from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
+from semantic_entry.modules.warehouse.postgres.catalog import (
     CustomerRepository,
     FilmTypeRepository,
     MaterialRecord,
     MaterialRepository,
     SupplierRepository,
 )
-from database.repositories.locks import lock_material
-from database.repositories.movements import MovementRepository
-from database.repositories.plans import (
+from semantic_entry.modules.warehouse.postgres.locks import lock_material
+from semantic_entry.modules.warehouse.postgres.movements import MovementRepository
+from semantic_entry.modules.warehouse.postgres.plans import (
     PlanCancellationRecord,
     PlanRecord,
     PlanRepository,
 )
-from database.repositories.transactions import TransactionRepository, validate_quantity
-from database.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.postgres.transactions import (
+    TransactionRepository,
+    validate_quantity,
+)
+from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 
 class Warehouse:

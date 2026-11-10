@@ -5,10 +5,13 @@ from decimal import Decimal
 from psycopg2.extensions import connection
 from pypika import Parameter, PostgreSQLQuery, Table
 
-from database.enums import TransactionType
-from database.repositories.locks import lock_material
-from database.repositories.plans import PlanRepository
-from database.repositories.transactions import TransactionRepository, validate_quantity
+from semantic_entry.modules.warehouse.enums import TransactionType
+from semantic_entry.modules.warehouse.postgres.locks import lock_material
+from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
+from semantic_entry.modules.warehouse.postgres.transactions import (
+    TransactionRepository,
+    validate_quantity,
+)
 
 
 @dataclass(frozen=True)

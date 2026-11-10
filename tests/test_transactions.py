@@ -13,11 +13,17 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
-from database.connection import create_connection
-from database.enums import TransactionType
-from database.repositories.catalog import FilmTypeRepository, MaterialRepository
-from database.repositories.transactions import TransactionRecord, TransactionRepository
-from database.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.enums import TransactionType
+from semantic_entry.modules.warehouse.postgres.catalog import (
+    FilmTypeRepository,
+    MaterialRepository,
+)
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.transactions import (
+    TransactionRecord,
+    TransactionRepository,
+)
+from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 
 class TransactionRepositoryPostgresTest(unittest.TestCase):

@@ -5,7 +5,7 @@ from decimal import Context, Decimal, localcontext
 from psycopg2.extensions import connection
 from pypika import Parameter, PostgreSQLQuery, Table
 
-from database.enums import TransactionType
+from semantic_entry.modules.warehouse.enums import TransactionType
 
 
 @dataclass(frozen=True)

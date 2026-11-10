@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from database.repositories.reports import ReportRepository
-from database.unit_of_work import UnitOfWork
+from semantic_entry.modules.warehouse.postgres.reports import ReportRepository
+from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.queries import GetStockResult
 
 if TYPE_CHECKING:

@@ -3,7 +3,7 @@ from decimal import Decimal
 from pypika import Case, PostgreSQLQuery, Table, functions
 from pypika.terms import NullValue
 
-from database.enums import TransactionType
+from semantic_entry.modules.warehouse.enums import TransactionType
 
 
 def select_plans(kind: TransactionType):

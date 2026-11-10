@@ -7,7 +7,7 @@ from unittest.mock import patch
 from openpyxl import load_workbook
 
 from app import app, reports
-from database.enums import FilmType, TransactionType
+from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
 
 
 class FixedDatetime(datetime):

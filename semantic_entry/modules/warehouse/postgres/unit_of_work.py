@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from database.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
 
 if TYPE_CHECKING:
     from types import TracebackType
