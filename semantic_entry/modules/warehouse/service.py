@@ -7,7 +7,6 @@ from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
 from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRepository,
     FilmTypeRepository,
-    MaterialRecord,
     MaterialRepository,
     SupplierRepository,
 )
@@ -31,6 +30,7 @@ if TYPE_CHECKING:
     from decimal import Decimal
 
     from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
+    from semantic_entry.modules.warehouse.models import MaterialRecord
 
 
 class Warehouse:

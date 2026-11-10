@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from decimal import Decimal
 
 from pydantic import Field, StrictInt
@@ -17,3 +18,19 @@ class StockBalance(CommandModel):
     planned_receipt_kg: Decimal
     available_kg: Decimal
     projected_kg: Decimal
+
+
+@dataclass(frozen=True)
+class MaterialRecord:
+    id: int
+    film_type_id: int
+    film_type_code: str
+    brand: str
+    format: int
+    thickness: int
+
+
+@dataclass(frozen=True)
+class SupplierRecord:
+    id: int
+    name: str

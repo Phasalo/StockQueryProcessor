@@ -18,7 +18,13 @@ from semantic_entry.modules.warehouse.postgres.handlers.receipt_execution import
 from semantic_entry.modules.warehouse.postgres.handlers.receipt_preview import (
     ReceiptPreviewHandler,
 )
+from semantic_entry.modules.warehouse.postgres.handlers.receipt_resolution import (
+    ReceiptResolutionHandler,
+)
 from semantic_entry.modules.warehouse.postgres.handlers.stock import StockQueryHandler
+from semantic_entry.modules.warehouse.queries.receipt_resolution import (
+    RESOLVE_RECEIPT_SPEC,
+)
 from semantic_entry.modules.warehouse.queries.stock import GET_STOCK_SPEC
 
 if TYPE_CHECKING:
@@ -42,11 +48,13 @@ def build_warehouse_engine(
     registry = CommandRegistry()
     registry.register(RECORD_RECEIPT_SPEC)
     registry.register(GET_STOCK_SPEC)
+    registry.register(RESOLVE_RECEIPT_SPEC)
     catalog = CommandCatalog(registry, authorizer)
     preparer = CommandPreparer(catalog)
     preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(uow_factory))
     queries = QueryExecutor(catalog)
     queries.register(GET_STOCK_SPEC, StockQueryHandler(uow_factory))
+    queries.register(RESOLVE_RECEIPT_SPEC, ReceiptResolutionHandler(uow_factory))
     engine = Engine(
         catalog, preparer, queries, drafts,
         lambda: PostgresCommandTransaction(uow_factory()),

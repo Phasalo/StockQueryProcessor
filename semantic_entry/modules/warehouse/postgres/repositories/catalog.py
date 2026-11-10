@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from psycopg2.extensions import connection
 from pypika import Parameter, PostgreSQLQuery, Table
 
+from semantic_entry.modules.warehouse.models import MaterialRecord, SupplierRecord
+
 
 @dataclass(frozen=True)
 class FilmTypeRecord:
@@ -12,26 +14,10 @@ class FilmTypeRecord:
 
 
 @dataclass(frozen=True)
-class MaterialRecord:
-    id: int
-    film_type_id: int
-    film_type_code: str
-    brand: str
-    format: int
-    thickness: int
-
-
-@dataclass(frozen=True)
 class CustomerRecord:
     id: int
     name: str
     prod_card_number: str
-
-
-@dataclass(frozen=True)
-class SupplierRecord:
-    id: int
-    name: str
 
 
 class FilmTypeRepository:
@@ -123,6 +109,7 @@ class MaterialRepository:
         film_format: int | None = None,
         thickness: int | None = None,
         limit: int = 10,
+        *, exact_brand: bool = False,
     ) -> list[MaterialRecord]:
         materials = Table("materials")
         query = self._select()
@@ -130,7 +117,10 @@ class MaterialRepository:
         if film_type_id is not None:
             query = query.where(materials.film_type_id == Parameter("%s"))
             params.append(film_type_id)
-        if brand:
+        if exact_brand and brand is not None:
+            query = query.where(materials.brand == Parameter("%s"))
+            params.append(brand)
+        elif brand:
             query = query.where(materials.brand.ilike(Parameter("%s")))
             params.append(f"%{brand}%")
         if film_format is not None:
@@ -244,11 +234,13 @@ class SupplierRepository:
     def find(self, name: str) -> SupplierRecord | None:
         return self._find("name", name)
 
-    def search(self, query: str, limit: int = 10) -> list[SupplierRecord]:
+    def search(self, query: str, limit: int = 10, *, literal: bool = False) -> list[SupplierRecord]:
         suppliers = Table("suppliers")
         statement = PostgreSQLQuery.from_(suppliers).select(suppliers.id, suppliers.name)
         params = []
         if query:
+            if literal:
+                query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             statement = statement.where(suppliers.name.ilike(Parameter("%s")))
             params.append(f"%{query}%")
         statement = statement.orderby(suppliers.id).limit(Parameter("%s"))

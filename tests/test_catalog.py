@@ -15,14 +15,13 @@ from semantic_entry.adapters.postgres.config import PostgresConfig
 from semantic_entry.adapters.postgres.connection import create_connection
 from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.enums import FilmType
+from semantic_entry.modules.warehouse.models import MaterialRecord, SupplierRecord
 from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRecord,
     CustomerRepository,
     FilmTypeRecord,
     FilmTypeRepository,
-    MaterialRecord,
     MaterialRepository,
-    SupplierRecord,
     SupplierRepository,
 )
 from semantic_entry.modules.warehouse.service import Warehouse
