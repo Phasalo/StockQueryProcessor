@@ -18,6 +18,14 @@ class DraftExpiredError(ValueError):
     pass
 
 
+class DraftVersionConflictError(ValueError):
+    pass
+
+
+class DraftClosedError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class CommandDraft:
     draft_id: UUID
@@ -27,3 +35,13 @@ class CommandDraft:
     preparation: PreparationResult
     created_at: datetime
     expires_at: datetime
+
+    def require_editable(self, expected_version: int) -> None:
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("Ожидаемая версия должна быть положительным целым числом.")
+        if self.version != expected_version:
+            raise DraftVersionConflictError(
+                f"Ожидалась версия {expected_version}, текущая версия {self.version}.",
+            )
+        if self.state not in (DraftState.NEEDS_INPUT, DraftState.READY):
+            raise DraftClosedError("Закрытый черновик нельзя изменить.")

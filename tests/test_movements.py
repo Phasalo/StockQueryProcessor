@@ -4,7 +4,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from os import environ, getenv
 from pathlib import Path
@@ -18,6 +18,9 @@ from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
 from semantic_entry.core import Actor, CommandCatalog, CommandPreparer, CommandRegistry
+from semantic_entry.core.draft_manager import DraftManager
+from semantic_entry.core.drafts import DraftState
+from semantic_entry.core.memory_drafts import MemoryDraftStore
 from semantic_entry.modules.warehouse.commands.receipts import (
     RECORD_RECEIPT_SPEC,
     ReceiptPreview,
@@ -126,15 +129,40 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
         with UnitOfWork(self.config) as uow:
             return ReceiptPreviewer(uow.connection).preview(self.receipt_parameters(**changes))
 
-    def receipt_preparation(self, **changes):
+    def receipt_preparer(self):
         registry = CommandRegistry()
         registry.register(RECORD_RECEIPT_SPEC)
         authorizer = Mock()
         authorizer.is_allowed.return_value = True
         preparer = CommandPreparer(CommandCatalog(registry, authorizer))
         preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(self.config))
+        return preparer
+
+    def receipt_preparation(self, **changes):
         payload = self.receipt_parameters(**changes).model_dump(mode="json")
-        return preparer.prepare("warehouse.record_receipt", 1, payload, Actor("receiver"))
+        return self.receipt_preparer().prepare("warehouse.record_receipt", 1, payload, Actor("receiver"))
+
+    def test_receipt_draft_revision_rechecks_plan_and_replaces_previous_preview(self):
+        plan = self.create_plan("receipt")
+        actor = Actor("receiver")
+        preparer = self.receipt_preparer()
+        payload = self.receipt_parameters(planned_receipt_id=plan.id).model_dump(mode="json")
+        prepared = preparer.prepare("warehouse.record_receipt", 1, payload, actor)
+        store = MemoryDraftStore()
+        draft = store.create(payload, prepared, lifetime=timedelta(minutes=5))
+        manager = DraftManager(preparer, store)
+        revised = manager.revise(draft.draft_id, 1, {"quantity_kg": "150.00"}, actor)
+        self.assertEqual((revised.version, revised.state), (2, DraftState.READY))
+        self.assertEqual(revised.preparation.preview.parameters.quantity_kg, Decimal("150.00"))
+        with UnitOfWork(self.config) as uow:
+            PlanRepository(uow.connection).cancel(plan.transaction_id, Decimal("100"), "Closed")
+        rechecked = manager.revise(draft.draft_id, 2, {}, actor)
+        self.assertEqual((rechecked.version, rechecked.state), (3, DraftState.NEEDS_INPUT))
+        self.assertIsNone(rechecked.preparation.preview)
+        self.assertEqual([(error.path, error.code) for error in rechecked.preparation.errors], [(("planned_receipt_id",), "plan_closed")])
+        self.assertEqual(store.get(draft.draft_id, actor), rechecked)
+        self.assertEqual(self.count_rows("receipts"), 0)
+        self.assertEqual(self.count_rows("transactions"), 1)
 
     def test_receipt_preparation_builds_preview_through_core(self):
         result = self.receipt_preparation()

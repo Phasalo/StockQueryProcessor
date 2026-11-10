@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import TYPE_CHECKING
@@ -31,7 +32,7 @@ class MemoryDraftStore:
         now = self._now()
         draft = CommandDraft(
             draft_id=uuid4(), version=1,
-            state=DraftState.READY if preparation.is_valid and preparation.preview is not None else DraftState.NEEDS_INPUT,
+            state=self._state(preparation),
             payload=dict(payload), preparation=preparation,
             created_at=now, expires_at=now + lifetime,
         )
@@ -41,12 +42,39 @@ class MemoryDraftStore:
 
     def get(self, draft_id: UUID, actor: Actor) -> CommandDraft:
         with self._lock:
-            draft = self._drafts[draft_id]
-            if draft.preparation.actor_id != actor.actor_id:
-                raise PermissionDeniedError("Черновик принадлежит другому субъекту.")
-            if self._now() >= draft.expires_at:
-                raise DraftExpiredError("Срок действия черновика истёк.")
-            return deepcopy(draft)
+            return deepcopy(self._get_owned(draft_id, actor))
+
+    def update(
+        self, draft_id: UUID, expected_version: int, actor: Actor,
+        *, payload: Mapping[str, object], preparation: PreparationResult,
+    ) -> CommandDraft:
+        with self._lock:
+            current = self._get_owned(draft_id, actor)
+            current.require_editable(expected_version)
+            if (
+                preparation.command_name != current.preparation.command_name
+                or preparation.command_version != current.preparation.command_version
+                or preparation.actor_id != current.preparation.actor_id
+            ):
+                raise ValueError("Команду, версию контракта и владельца черновика нельзя изменить.")
+            updated = replace(
+                current, version=current.version + 1, state=self._state(preparation),
+                payload=dict(payload), preparation=preparation,
+            )
+            self._drafts[draft_id] = deepcopy(updated)
+            return deepcopy(updated)
+
+    def _get_owned(self, draft_id: UUID, actor: Actor) -> CommandDraft:
+        draft = self._drafts[draft_id]
+        if draft.preparation.actor_id != actor.actor_id:
+            raise PermissionDeniedError("Черновик принадлежит другому субъекту.")
+        if self._now() >= draft.expires_at:
+            raise DraftExpiredError("Срок действия черновика истёк.")
+        return draft
+
+    @staticmethod
+    def _state(preparation: PreparationResult) -> DraftState:
+        return DraftState.READY if preparation.is_valid and preparation.preview is not None else DraftState.NEEDS_INPUT
 
     def _now(self) -> datetime:
         now = self._clock()
