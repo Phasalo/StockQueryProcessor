@@ -3,10 +3,12 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from psycopg2.extensions import connection
+from psycopg2.extras import RealDictCursor
 from pypika import Order, Parameter, PostgreSQLQuery, Table, functions
 
 from database.enums import TransactionType
 from database.repositories.plan_queries import select_plans
+from semantic_entry.modules.warehouse.models import StockBalance
 
 
 @dataclass(frozen=True)
@@ -29,21 +31,6 @@ class JournalRecord:
     order_date: date | None
     planned_date: date | None
     actual_date: date | None
-
-
-@dataclass(frozen=True)
-class StockRecord:
-    material_id: int
-    film_type_code: str
-    film_type_name: str
-    brand: str
-    format: int
-    thickness: int
-    on_hand_kg: Decimal
-    reserved_kg: Decimal
-    planned_receipt_kg: Decimal
-    available_kg: Decimal
-    projected_kg: Decimal
 
 
 @dataclass(frozen=True)
@@ -73,17 +60,17 @@ class ReportRepository:
     def __init__(self, connection: connection):
         self._connection = connection
 
-    def get_stock(self, material_id: int) -> StockRecord | None:
+    def get_stock(self, material_id: int) -> StockBalance | None:
         query = self._stock_query().where(Table("materials").id == Parameter("%s"))
-        with self._connection.cursor() as cursor:
+        with self._connection.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(str(query), (material_id,))
             row = cursor.fetchone()
-        return StockRecord(*row) if row else None
+        return StockBalance.model_validate(row) if row is not None else None
 
     def list_stock(
         self, film_type_code: str | None = None, *, film_format: int | None = None,
         thickness: int | None = None, brand: str | None = None,
-    ) -> list[StockRecord]:
+    ) -> list[StockBalance]:
         query = self._stock_query()
         params = []
         if film_type_code is not None:
@@ -98,9 +85,9 @@ class ReportRepository:
             Table("film_types").code, materials.format, materials.thickness,
             materials.brand, materials.id,
         )
-        with self._connection.cursor() as cursor:
+        with self._connection.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(str(query), tuple(params))
-            return [StockRecord(*row) for row in cursor.fetchall()]
+            return [StockBalance.model_validate(row) for row in cursor.fetchall()]
 
     def list_open_consumption(self, material_id: int) -> list[ConsumptionDetailRecord]:
         plans = select_plans(TransactionType.CONSUMPTION).as_("plans")
@@ -189,10 +176,15 @@ class ReportRepository:
             .left_join(reserved).on(reserved.material_id == materials.id)
             .left_join(expected).on(expected.material_id == materials.id)
             .select(
-                materials.id, film_types.code, film_types.name,
+                materials.id.as_("material_id"),
+                film_types.code.as_("film_type_code"),
+                film_types.name.as_("film_type_name"),
                 materials.brand, materials.format, materials.thickness,
-                on_hand_kg, reserved_kg, expected_kg,
-                on_hand_kg - reserved_kg, on_hand_kg - reserved_kg + expected_kg,
+                on_hand_kg.as_("on_hand_kg"),
+                reserved_kg.as_("reserved_kg"),
+                expected_kg.as_("planned_receipt_kg"),
+                (on_hand_kg - reserved_kg).as_("available_kg"),
+                (on_hand_kg - reserved_kg + expected_kg).as_("projected_kg"),
             )
         )
 

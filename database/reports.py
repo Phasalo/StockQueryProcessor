@@ -1,9 +1,15 @@
-from decimal import Decimal
+from __future__ import annotations
 
-from config import WarehouseConfig
+from decimal import Decimal
+from typing import TYPE_CHECKING
+
 from database.enums import FilmType, TransactionType
-from database.repositories.reports import ReportRepository, StockRecord
+from database.repositories.reports import ReportRepository
 from database.unit_of_work import UnitOfWork
+
+if TYPE_CHECKING:
+    from config import WarehouseConfig
+    from semantic_entry.modules.warehouse.models import StockBalance
 
 
 class WarehouseReports:
@@ -15,7 +21,7 @@ class WarehouseReports:
         return film_type.name if isinstance(film_type, FilmType) else film_type
 
     @staticmethod
-    def _stock_result(row: StockRecord) -> dict:
+    def _stock_result(row: StockBalance) -> dict:
         return {
             "material_id": row.material_id, "brand": row.brand,
             "format": row.format, "thickness": row.thickness,

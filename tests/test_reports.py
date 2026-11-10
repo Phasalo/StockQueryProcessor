@@ -8,7 +8,7 @@ from decimal import Decimal, localcontext
 from io import BytesIO
 from os import environ, getenv
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from openpyxl import load_workbook
@@ -28,9 +28,13 @@ from database.repositories.catalog import (
 )
 from database.repositories.movements import MovementRepository
 from database.repositories.plans import PlanRepository
-from database.repositories.reports import JournalRecord, ReportRepository, StockRecord
+from database.repositories.reports import JournalRecord, ReportRepository
 from database.repositories.transactions import TransactionRepository
 from database.unit_of_work import UnitOfWork
+from semantic_entry.core import Actor, CommandCatalog, CommandRegistry, QueryExecutor
+from semantic_entry.modules.warehouse.models import StockBalance
+from semantic_entry.modules.warehouse.postgres.stock import StockQueryHandler
+from semantic_entry.modules.warehouse.queries import GET_STOCK_SPEC, GetStockResult
 
 
 class ReportRepositoryPostgresTest(unittest.TestCase):
@@ -104,6 +108,59 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
             return ReportRepository(uow.connection).get_stock(
                 self.material_id if material_id is None else material_id,
             )
+
+    def stock_query(self, material_id):
+        registry = CommandRegistry()
+        registry.register(GET_STOCK_SPEC)
+        authorizer = Mock()
+        authorizer.is_allowed.return_value = True
+        executor = QueryExecutor(CommandCatalog(registry, authorizer))
+        executor.register(GET_STOCK_SPEC, StockQueryHandler(self.config))
+        return executor.query("warehouse.get_stock", 1, {"material_id": material_id}, Actor("reader"))
+
+    def test_stock_query_returns_typed_balances_for_one_material(self):
+        with UnitOfWork(self.config) as uow:
+            movements = MovementRepository(uow.connection)
+            movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("100.25"))
+            movements.add_issue(self.material_id, self.customer_id, None, Decimal("-20.05"))
+            movements.add_receipt(self.other_material_id, self.supplier_id, self.actual_date, Decimal("7"))
+            TransactionRepository(uow.connection).add("ADJUSTMENT", self.material_id, Decimal("-5.10"))
+            plans = PlanRepository(uow.connection)
+            outgoing = plans.add_consumption(self.material_id, self.customer_id, Decimal("-30.25"))
+            incoming = plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("40.75"))
+            for plan in (outgoing, incoming):
+                plans.cancel(plan.transaction_id, Decimal("10"), "Partial")
+        before = self.journal()
+        result = self.stock_query(self.material_id)
+        self.assertIsInstance(result, GetStockResult)
+        stock = result.stock
+        self.assertEqual((stock.material_id, stock.film_type_code, stock.brand), (self.material_id, "BOPP", "Brand"))
+        self.assertEqual((stock.format, stock.thickness), (1200, 25))
+        self.assertEqual(stock.on_hand_kg, Decimal("75.10"))
+        self.assertEqual(stock.reserved_kg, Decimal("20.25"))
+        self.assertEqual(stock.planned_receipt_kg, Decimal("30.75"))
+        self.assertEqual(stock.available_kg, Decimal("54.85"))
+        self.assertEqual(stock.projected_kg, Decimal("85.60"))
+        self.assertIsInstance(stock.on_hand_kg, Decimal)
+        self.assertEqual(result.model_dump(mode="json")["stock"]["available_kg"], "54.85")
+        self.assertEqual(self.journal(), before)
+
+    def test_stock_query_distinguishes_missing_material_from_zero_balance(self):
+        stock = self.stock_query(self.material_id).stock
+        self.assertEqual(stock.material_id, self.material_id)
+        self.assertEqual(stock.on_hand_kg, Decimal("0"))
+        self.assertEqual(stock.projected_kg, Decimal("0"))
+        missing = self.stock_query(max(self.material_id, self.other_material_id) + 1)
+        self.assertIsNone(missing.stock)
+        self.assertEqual(missing.model_dump(mode="json"), {"stock": None})
+
+    def test_stock_query_preserves_negative_balances(self):
+        with UnitOfWork(self.config) as uow:
+            TransactionRepository(uow.connection).add("ADJUSTMENT", self.material_id, Decimal("-2.30"))
+        stock = self.stock_query(self.material_id).stock
+        self.assertEqual(stock.on_hand_kg, Decimal("-2.30"))
+        self.assertEqual(stock.available_kg, Decimal("-2.30"))
+        self.assertEqual(stock.projected_kg, Decimal("-2.30"))
 
     def test_summary_facade_keeps_brands_separate_and_legacy_quantity_signs(self):
         with UnitOfWork(self.config) as uow:
@@ -229,7 +286,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
 
     def test_stock_for_material_without_transactions_has_decimal_zeros(self):
         record = self.stock()
-        self.assertIsInstance(record, StockRecord)
+        self.assertIsInstance(record, StockBalance)
         self.assertEqual(record.material_id, self.material_id)
         self.assertEqual(record.film_type_code, "BOPP")
         self.assertEqual(record.brand, "Brand")
