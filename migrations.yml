@@ -1,4 +1,5 @@
 conn: ''
-schema: public
+# Multiple application schemas share migration metadata in public.
+schema: null
 session:
   - SET search_path TO public

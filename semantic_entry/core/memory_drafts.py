@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from semantic_entry.core.contracts import PermissionDeniedError
-from semantic_entry.core.drafts import CommandDraft, DraftExpiredError, DraftState
+from semantic_entry.core.drafts import (
+    CommandDraft,
+    DraftExpiredError,
+    DraftNotFoundError,
+    DraftState,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Mapping
@@ -53,14 +58,32 @@ class MemoryDraftStore:
             return deepcopy(self._get_owned(entry, actor))
 
     @contextmanager
-    def lock_ready(
+    def lock_current(self, draft_id: UUID, actor: Actor) -> Generator[CommandDraft, None, None]:
+        entry = self._entry(draft_id)
+        with entry.lock:
+            yield deepcopy(self._get_owned(entry, actor))
+
+    @contextmanager
+    def lock_confirmation(
         self, draft_id: UUID, expected_version: int, actor: Actor,
     ) -> Generator[CommandDraft, None, None]:
         entry = self._entry(draft_id)
         with entry.lock:
-            current = self._get_owned(entry, actor)
-            current.require_ready(expected_version)
+            current = self._get_owned(entry, actor, allow_expired=entry.draft.state == DraftState.EXECUTED)
+            current.require_version(expected_version)
+            if current.state != DraftState.EXECUTED:
+                current.require_ready(expected_version)
             yield deepcopy(current)
+
+    def mark_executed(self, draft_id: UUID, expected_version: int, actor: Actor) -> CommandDraft:
+        entry = self._entry(draft_id)
+        with entry.lock:
+            current = self._get_owned(entry, actor, allow_expired=True)
+            current.require_version(expected_version)
+            if current.state != DraftState.EXECUTED:
+                current.require_ready(expected_version)
+                entry.draft = replace(current, state=DraftState.EXECUTED)
+            return deepcopy(entry.draft)
 
     def update(
         self, draft_id: UUID, expected_version: int, actor: Actor,
@@ -94,13 +117,16 @@ class MemoryDraftStore:
 
     def _entry(self, draft_id: UUID) -> _DraftEntry:
         with self._lock:
-            return self._drafts[draft_id]
+            try:
+                return self._drafts[draft_id]
+            except KeyError as error:
+                raise DraftNotFoundError(draft_id) from error
 
-    def _get_owned(self, entry: _DraftEntry, actor: Actor) -> CommandDraft:
+    def _get_owned(self, entry: _DraftEntry, actor: Actor, *, allow_expired: bool = False) -> CommandDraft:
         draft = entry.draft
         if draft.preparation.actor_id != actor.actor_id:
             raise PermissionDeniedError("Черновик принадлежит другому субъекту.")
-        if self._now() >= draft.expires_at:
+        if not allow_expired and self._now() >= draft.expires_at:
             raise DraftExpiredError("Срок действия черновика истёк.")
         return draft
 

@@ -131,9 +131,13 @@ class InitialMigrationPostgresTest(unittest.TestCase):
             ("LDPE_HALF_SLEEVE", "ПВД полурукав"),
         ])
         self.assertEqual(self.query(
-            "SELECT version, description, type::text FROM schema_version"
+            "SELECT version, description, type::text FROM schema_version ORDER BY version"
         ), [
             (1, "initial warehouse", "auto"),
+            (2, "engine executions", "auto"),
+        ])
+        self.assertEqual(self.query("SELECT tablename FROM pg_tables WHERE schemaname = 'engine' ORDER BY tablename"), [
+            ("audit_events",), ("executions",), ("idempotency_records",),
         ])
         self.assertEqual(self.query(
             "SELECT numeric_precision, numeric_scale FROM information_schema.columns "
@@ -161,8 +165,31 @@ class InitialMigrationPostgresTest(unittest.TestCase):
         self.assertEqual(self.query("SELECT name FROM film_types WHERE code = 'BOPP'"), [
             ("Custom name",),
         ])
-        self.assertEqual(self.query("SELECT count(*) FROM schema_version"), [(1,)])
+        self.assertEqual(self.query("SELECT count(*) FROM schema_version"), [(2,)])
         self.assertEqual(self.query("SELECT installed_on FROM schema_version"), installed_on)
+
+    def test_engine_migration_upgrades_warehouse_without_changing_materials(self):
+        with TemporaryDirectory() as folder:
+            self.run_pgmigrate(base_dir=self.copy_migration_project(folder))
+        material_id = self.add_material()
+        before = self.query("SELECT * FROM materials ORDER BY id")
+        self.run_pgmigrate()
+        self.assertEqual(self.query("SELECT * FROM materials ORDER BY id"), before)
+        self.assertEqual(before[0][0], material_id)
+        self.assertEqual(self.query("SELECT count(*) FROM engine.executions"), [(0,)])
+        self.assertEqual(self.query("SELECT count(*) FROM pg_tables WHERE tablename = 'drafts'"), [(0,)])
+
+    def test_engine_migration_error_rolls_back_engine_schema_and_preserves_warehouse(self):
+        with TemporaryDirectory() as folder:
+            base_dir = self.copy_migration_project(folder)
+            self.run_pgmigrate(base_dir=base_dir)
+            material_id = self.add_material()
+            migration = ROOT / "migrations" / "V002__engine_executions.sql"
+            (base_dir / "migrations" / migration.name).write_text(migration.read_text() + "\nSELECT 1 / 0;\n")
+            self.run_pgmigrate(base_dir=base_dir, expect_success=False)
+        self.assertEqual(self.query("SELECT id FROM materials"), [(material_id,)])
+        self.assertEqual(self.query("SELECT count(*) FROM pg_namespace WHERE nspname = 'engine'"), [(0,)])
+        self.assertEqual(self.query("SELECT version FROM schema_version"), [(1,)])
 
     def test_sql_error_rolls_back_schema_seed_and_version(self):
         with TemporaryDirectory() as folder:

@@ -15,6 +15,7 @@ from uuid import uuid4
 import psycopg2
 from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
+from pydantic import ValidationError
 
 from config import WarehouseConfig
 from semantic_entry.core import Actor, CommandCatalog, CommandPreparer, CommandRegistry
@@ -25,9 +26,13 @@ from semantic_entry.modules.warehouse.commands.receipts import (
     RECORD_RECEIPT_SPEC,
     ReceiptPreview,
     RecordReceiptInput,
+    RecordReceiptResult,
 )
 from semantic_entry.modules.warehouse.enums import TransactionType
 from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.handlers.receipt_execution import (
+    RecordReceiptHandler,
+)
 from semantic_entry.modules.warehouse.postgres.handlers.receipt_preview import (
     ReceiptPreviewer,
     ReceiptPreviewHandler,
@@ -143,6 +148,101 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
     def receipt_preparation(self, **changes):
         payload = self.receipt_parameters(**changes).model_dump(mode="json")
         return self.receipt_preparer().prepare("warehouse.record_receipt", 1, payload, Actor("receiver"))
+
+    def test_receipt_handler_returns_distinct_journal_and_detail_ids(self):
+        with UnitOfWork(self.config) as uow:
+            TransactionRepository(uow.connection).add("ADJUSTMENT", self.other_material_id, Decimal("1"))
+            result = RecordReceiptHandler(uow.connection).execute(self.receipt_parameters(), Actor("receiver"))
+            self.assertIsInstance(result, RecordReceiptResult)
+            self.assertNotEqual(result.transaction_id, result.receipt_id)
+            saved = MovementRepository(uow.connection).get_receipt(result.receipt_id)
+            self.assertEqual(saved.transaction_id, result.transaction_id)
+            self.assertEqual((saved.material_id, saved.supplier_id), (self.material_id, self.supplier_id))
+            self.assertEqual(saved.quantity_delta_kg, Decimal("12.50"))
+            self.assertEqual(saved.actual_date, self.actual_date)
+            self.assertIsNone(saved.planned_receipt_id)
+        self.assertEqual(self.count_rows("receipts"), 1)
+        self.assertEqual(self.count_rows("transactions"), 2)
+
+    def test_receipt_handler_executes_open_plan_for_smaller_and_larger_quantities(self):
+        for quantity in (Decimal("10"), Decimal("150")):
+            with self.subTest(quantity=quantity):
+                plan = self.create_plan("receipt")
+                with UnitOfWork(self.config) as uow:
+                    plans = PlanRepository(uow.connection)
+                    plans.cancel(plan.transaction_id, Decimal("25"), "Partial")
+                    result = RecordReceiptHandler(uow.connection).execute(
+                        self.receipt_parameters(planned_receipt_id=plan.id, quantity_kg=quantity),
+                        Actor("receiver"),
+                    )
+                    closed = plans.get_receipt(plan.id)
+                    self.assertTrue(closed.is_executed)
+                    self.assertEqual(closed.remaining_quantity_kg, Decimal("0"))
+                    receipt = MovementRepository(uow.connection).get_receipt(result.receipt_id)
+                    self.assertEqual(receipt.planned_receipt_id, plan.id)
+                    self.assertEqual(receipt.quantity_delta_kg, quantity)
+        self.assertEqual(self.count_rows("receipts"), 2)
+
+    def test_receipt_handler_rechecks_plan_closed_after_preview(self):
+        plan = self.create_plan("receipt")
+        self.assertTrue(self.receipt_preview(planned_receipt_id=plan.id).is_valid)
+        with UnitOfWork(self.config) as uow:
+            PlanRepository(uow.connection).cancel(plan.transaction_id, Decimal("100"), "Closed")
+        with self.assertRaisesRegex(ValueError, "закрыт"):
+            with UnitOfWork(self.config) as uow:
+                RecordReceiptHandler(uow.connection).execute(
+                    self.receipt_parameters(planned_receipt_id=plan.id), Actor("receiver"),
+                )
+        self.assertEqual(self.count_rows("receipts"), 0)
+        self.assertEqual(self.count_rows("transactions"), 1)
+
+    def test_receipt_handler_rejects_material_and_supplier_mismatches(self):
+        plan = self.create_plan("receipt")
+        for changes in ({"material_id": self.other_material_id}, {"supplier_id": self.other_supplier_id}):
+            with self.subTest(changes=changes):
+                with self.assertRaises(ValueError):
+                    with UnitOfWork(self.config) as uow:
+                        RecordReceiptHandler(uow.connection).execute(
+                            self.receipt_parameters(planned_receipt_id=plan.id, **changes), Actor("receiver"),
+                        )
+        self.assertEqual(self.count_rows("receipts"), 0)
+        self.assertEqual(self.count_rows("transactions"), 1)
+
+    def test_receipt_handler_leaves_commit_and_rollback_to_caller(self):
+        with UnitOfWork(self.config) as uow:
+            RecordReceiptHandler(uow.connection).execute(self.receipt_parameters(), Actor("receiver"))
+            self.assertEqual(self.count_rows("transactions"), 0)
+            self.assertEqual(self.count_rows("receipts"), 0)
+            uow.rollback()
+        self.assertEqual(self.count_rows("transactions"), 0)
+        self.assertEqual(self.count_rows("receipts"), 0)
+
+    def test_receipt_handler_rolls_back_with_later_execution_failure(self):
+        with self.assertRaisesRegex(RuntimeError, "Execution record failed"):
+            with UnitOfWork(self.config) as uow:
+                RecordReceiptHandler(uow.connection).execute(self.receipt_parameters(), Actor("receiver"))
+                raise RuntimeError("Execution record failed")
+        self.assertEqual(self.count_rows("transactions"), 0)
+        self.assertEqual(self.count_rows("receipts"), 0)
+
+    def test_receipt_handler_missing_supplier_rolls_back_journal(self):
+        with self.assertRaises(psycopg2.errors.ForeignKeyViolation):
+            with UnitOfWork(self.config) as uow:
+                RecordReceiptHandler(uow.connection).execute(
+                    self.receipt_parameters(supplier_id=999999), Actor("receiver"),
+                )
+        self.assertEqual(self.count_rows("transactions"), 0)
+        self.assertEqual(self.count_rows("receipts"), 0)
+
+    def test_receipt_handler_revalidates_mutated_parameters_before_repository_call(self):
+        parameters = self.receipt_parameters()
+        parameters.quantity_kg = Decimal("0")
+        with UnitOfWork(self.config) as uow:
+            with patch.object(MovementRepository, "add_receipt") as add_receipt:
+                with self.assertRaises(ValidationError):
+                    RecordReceiptHandler(uow.connection).execute(parameters, Actor("receiver"))
+                add_receipt.assert_not_called()
+        self.assertEqual(self.count_rows("transactions"), 0)
 
     def test_receipt_draft_revision_rechecks_plan_and_replaces_previous_preview(self):
         plan = self.create_plan("receipt")

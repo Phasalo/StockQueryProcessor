@@ -26,6 +26,19 @@ InputT = TypeVar("InputT", bound=CommandModel)
 PreviewT = TypeVar("PreviewT", bound=CommandModel)
 
 
+def validate_preview(result: object, preview_model: type[PreviewT]) -> PreviewResult[PreviewT]:
+    expected_model = PreviewResult[preview_model]
+    if not isinstance(result, expected_model):
+        raise TypeError("Обработчик preview вернул результат другой схемы.")
+    checked = expected_model.model_validate(result.model_dump(round_trip=True))
+    if (
+        (checked.preview is None and not checked.errors)
+        or (checked.preview is not None and checked.errors)
+    ):
+        raise ValueError("Обработчик preview должен вернуть карточку либо ошибки.")
+    return checked
+
+
 class CommandPreparer:
     def __init__(self, catalog: CommandCatalog):
         self._catalog = catalog
@@ -78,13 +91,5 @@ class CommandPreparer:
             return result
         _, preview_model, handler = binding
         preview = handler(validated, actor)
-        expected_model = PreviewResult[preview_model]
-        if not isinstance(preview, expected_model):
-            raise TypeError("Обработчик preview вернул результат другой схемы.")
-        checked = expected_model.model_validate(preview.model_dump(round_trip=True))
-        if (
-            (checked.preview is None and not checked.errors)
-            or (checked.preview is not None and checked.errors)
-        ):
-            raise ValueError("Обработчик preview должен вернуть карточку либо ошибки.")
+        checked = validate_preview(preview, preview_model)
         return replace(result, errors=checked.errors, preview=checked.preview)

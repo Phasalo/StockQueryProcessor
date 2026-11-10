@@ -49,7 +49,7 @@ class DraftLockingTest(unittest.TestCase):
 
     def test_lock_yields_isolated_ready_snapshot(self):
         original = self.create()
-        with self.store.lock_ready(original.draft_id, 1, self.actor) as locked:
+        with self.store.lock_confirmation(original.draft_id, 1, self.actor) as locked:
             self.assertEqual(locked, original)
             locked.payload["text"] = "Changed"
             locked.preparation.preview.summary = "Changed"
@@ -59,15 +59,15 @@ class DraftLockingTest(unittest.TestCase):
     def test_invalid_versions_and_other_author_cannot_enter_context(self):
         original = self.create()
         with self.assertRaises(PermissionDeniedError):
-            with self.store.lock_ready(original.draft_id, 1, Actor("other")):
+            with self.store.lock_confirmation(original.draft_id, 1, Actor("other")):
                 self.fail("Context must not be entered")
         with self.assertRaises(DraftVersionConflictError):
-            with self.store.lock_ready(original.draft_id, 2, self.actor):
+            with self.store.lock_confirmation(original.draft_id, 2, self.actor):
                 self.fail("Context must not be entered")
         for version in (True, 0, "1"):
             with self.subTest(version=version):
                 with self.assertRaises(ValueError):
-                    with self.store.lock_ready(original.draft_id, version, self.actor):
+                    with self.store.lock_confirmation(original.draft_id, version, self.actor):
                         self.fail("Context must not be entered")
 
     def test_partial_and_schema_only_drafts_are_not_ready(self):
@@ -78,19 +78,19 @@ class DraftLockingTest(unittest.TestCase):
             with self.subTest(prepared=prepared):
                 original = self.create(prepared)
                 with self.assertRaises(DraftNotReadyError):
-                    with self.store.lock_ready(original.draft_id, 1, self.actor):
+                    with self.store.lock_confirmation(original.draft_id, 1, self.actor):
                         self.fail("Context must not be entered")
 
     def test_cancelled_and_expired_drafts_cannot_enter_context(self):
         original = self.create()
         self.store.cancel(original.draft_id, 1, self.actor)
         with self.assertRaises(DraftClosedError):
-            with self.store.lock_ready(original.draft_id, 2, self.actor):
+            with self.store.lock_confirmation(original.draft_id, 2, self.actor):
                 self.fail("Context must not be entered")
         expired = self.create()
         self.clock.return_value = expired.expires_at
         with self.assertRaises(DraftExpiredError):
-            with self.store.lock_ready(expired.draft_id, 1, self.actor):
+            with self.store.lock_confirmation(expired.draft_id, 1, self.actor):
                 self.fail("Context must not be entered")
 
     def test_cancellation_waits_until_context_finishes(self):
@@ -106,7 +106,7 @@ class DraftLockingTest(unittest.TestCase):
                 finished.set()
 
         with ThreadPoolExecutor(max_workers=1) as executor:
-            with self.store.lock_ready(original.draft_id, 1, self.actor):
+            with self.store.lock_confirmation(original.draft_id, 1, self.actor):
                 future = executor.submit(cancel)
                 self.assertTrue(started.wait(timeout=3))
                 self.assertFalse(finished.wait(timeout=0.05))
@@ -129,7 +129,7 @@ class DraftLockingTest(unittest.TestCase):
                 finished.set()
 
         with ThreadPoolExecutor(max_workers=1) as executor:
-            with self.store.lock_ready(original.draft_id, 1, self.actor):
+            with self.store.lock_confirmation(original.draft_id, 1, self.actor):
                 future = executor.submit(update)
                 self.assertTrue(started.wait(timeout=3))
                 self.assertFalse(finished.wait(timeout=0.05))
@@ -140,7 +140,7 @@ class DraftLockingTest(unittest.TestCase):
         original = self.create()
         other = self.create()
         with ThreadPoolExecutor(max_workers=1) as executor:
-            with self.store.lock_ready(original.draft_id, 1, self.actor):
+            with self.store.lock_confirmation(original.draft_id, 1, self.actor):
                 future = executor.submit(self.store.cancel, other.draft_id, 1, self.actor)
                 cancelled = future.result(timeout=3)
         self.assertEqual(cancelled.state, DraftState.CANCELLED)
@@ -149,7 +149,7 @@ class DraftLockingTest(unittest.TestCase):
     def test_lock_is_released_after_exception(self):
         original = self.create()
         with self.assertRaisesRegex(RuntimeError, "Transaction failed"):
-            with self.store.lock_ready(original.draft_id, 1, self.actor):
+            with self.store.lock_confirmation(original.draft_id, 1, self.actor):
                 raise RuntimeError("Transaction failed")
         with ThreadPoolExecutor(max_workers=1) as executor:
             cancelled = executor.submit(self.store.cancel, original.draft_id, 1, self.actor).result(timeout=3)
