@@ -26,6 +26,10 @@ class DraftClosedError(ValueError):
     pass
 
 
+class DraftNotReadyError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class CommandDraft:
     draft_id: UUID
@@ -45,3 +49,12 @@ class CommandDraft:
             )
         if self.state not in (DraftState.NEEDS_INPUT, DraftState.READY):
             raise DraftClosedError("Закрытый черновик нельзя изменить.")
+
+    def require_ready(self, expected_version: int) -> None:
+        self.require_editable(expected_version)
+        if (
+            self.state != DraftState.READY
+            or not self.preparation.is_valid
+            or self.preparation.preview is None
+        ):
+            raise DraftNotReadyError("Черновик ещё не готов к подтверждению.")
