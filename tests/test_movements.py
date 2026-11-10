@@ -17,6 +17,10 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
+from semantic_entry.modules.warehouse.commands.receipts import (
+    ReceiptPreview,
+    RecordReceiptInput,
+)
 from semantic_entry.modules.warehouse.enums import TransactionType
 from semantic_entry.modules.warehouse.postgres.catalog import (
     CustomerRepository,
@@ -31,6 +35,7 @@ from semantic_entry.modules.warehouse.postgres.movements import (
     ReceiptRecord,
 )
 from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
+from semantic_entry.modules.warehouse.postgres.receipt_preview import ReceiptPreviewer
 from semantic_entry.modules.warehouse.postgres.transactions import TransactionRepository
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.service import Warehouse
@@ -102,6 +107,109 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
                     self.actual_date, Decimal("100"),
                 )
             return plans.add_consumption(self.material_id, self.customer_id, Decimal("-100"))
+
+    def receipt_parameters(self, **changes):
+        return RecordReceiptInput(**{
+            "material_id": self.material_id,
+            "supplier_id": self.supplier_id,
+            "actual_date": self.actual_date,
+            "quantity_kg": Decimal("12.50"),
+            **changes,
+        })
+
+    def receipt_preview(self, **changes):
+        with UnitOfWork(self.config) as uow:
+            return ReceiptPreviewer(uow.connection).preview(self.receipt_parameters(**changes))
+
+    def test_receipt_preview_returns_card_without_creating_movement(self):
+        result = self.receipt_preview()
+        self.assertTrue(result.is_valid)
+        self.assertIsInstance(result.preview, ReceiptPreview)
+        self.assertEqual(result.errors, ())
+        self.assertEqual(result.preview.parameters.material_id, self.material_id)
+        self.assertEqual(result.preview.parameters.quantity_kg, Decimal("12.50"))
+        self.assertEqual(result.preview.parameters.actual_date, self.actual_date)
+        self.assertEqual(result.preview.supplier_name, "Supplier")
+        self.assertEqual((result.preview.film_type_code, result.preview.brand), ("BOPP", "Brand"))
+        self.assertEqual((result.preview.format, result.preview.thickness), (1200, 25))
+        self.assertIsNone(result.preview.plan_remaining_quantity_kg)
+        self.assertEqual(result.model_dump(mode="json")["preview"]["parameters"]["quantity_kg"], "12.50")
+        self.assertEqual(self.count_rows("transactions"), 0)
+        self.assertEqual(self.count_rows("receipts"), 0)
+
+    def test_receipt_preview_reports_missing_material_and_supplier(self):
+        result = self.receipt_preview(material_id=999999, supplier_id=999999)
+        self.assertFalse(result.is_valid)
+        self.assertIsNone(result.preview)
+        self.assertEqual([(error.path, error.code) for error in result.errors], [
+            (("material_id",), "not_found"), (("supplier_id",), "not_found"),
+        ])
+
+    def test_receipt_preview_reports_missing_plan(self):
+        result = self.receipt_preview(planned_receipt_id=999999)
+        self.assertFalse(result.is_valid)
+        self.assertEqual([(error.path, error.code) for error in result.errors], [(("planned_receipt_id",), "not_found")])
+
+    def test_receipt_preview_reports_plan_material_and_supplier_mismatches(self):
+        plan = self.create_plan("receipt")
+        result = self.receipt_preview(
+            planned_receipt_id=plan.id, material_id=self.other_material_id,
+            supplier_id=self.other_supplier_id,
+        )
+        self.assertFalse(result.is_valid)
+        self.assertEqual([(error.path, error.code) for error in result.errors], [
+            (("material_id",), "plan_material_mismatch"), (("supplier_id",), "plan_supplier_mismatch"),
+        ])
+
+    def test_receipt_preview_accepts_any_positive_quantity_for_open_plan(self):
+        plan = self.create_plan("receipt")
+        with UnitOfWork(self.config) as uow:
+            PlanRepository(uow.connection).cancel(plan.transaction_id, Decimal("25"), "Partial")
+        for quantity in (Decimal("10"), Decimal("150")):
+            with self.subTest(quantity=quantity):
+                result = self.receipt_preview(planned_receipt_id=plan.id, quantity_kg=quantity)
+                self.assertTrue(result.is_valid)
+                self.assertEqual(result.preview.plan_remaining_quantity_kg, Decimal("75"))
+                self.assertEqual(result.preview.parameters.quantity_kg, quantity)
+        with UnitOfWork(self.config) as uow:
+            unchanged = PlanRepository(uow.connection).get_receipt(plan.id)
+        self.assertFalse(unchanged.is_closed)
+        self.assertEqual(unchanged.remaining_quantity_kg, Decimal("75"))
+        self.assertEqual(self.count_rows("transactions"), 1)
+        self.assertEqual(self.count_rows("receipts"), 0)
+
+    def test_receipt_preview_rejects_cancelled_and_executed_plans(self):
+        for state in ("cancelled", "executed"):
+            with self.subTest(state=state):
+                plan = self.create_plan("receipt")
+                with UnitOfWork(self.config) as uow:
+                    if state == "cancelled":
+                        PlanRepository(uow.connection).cancel(plan.transaction_id, Decimal("100"), "All")
+                    else:
+                        MovementRepository(uow.connection).add_receipt(
+                            self.material_id, self.supplier_id, self.actual_date,
+                            Decimal("50"), planned_receipt_id=plan.id,
+                        )
+                before = self.count_rows("transactions")
+                result = self.receipt_preview(planned_receipt_id=plan.id)
+                self.assertFalse(result.is_valid)
+                self.assertEqual([(error.path, error.code) for error in result.errors], [(("planned_receipt_id",), "plan_closed")])
+                self.assertEqual(self.count_rows("transactions"), before)
+
+    def test_receipt_preview_uses_callers_uncommitted_catalog_data(self):
+        with UnitOfWork(self.config) as uow:
+            film_type = FilmTypeRepository(uow.connection).find_by_code("BOPP")
+            material_id = MaterialRepository(uow.connection).add(film_type.id, "Uncommitted", 1000, 20)
+            supplier_id = SupplierRepository(uow.connection).add("Uncommitted")
+            result = ReceiptPreviewer(uow.connection).preview(self.receipt_parameters(
+                material_id=material_id, supplier_id=supplier_id,
+            ))
+            self.assertTrue(result.is_valid)
+            self.assertEqual((result.preview.brand, result.preview.supplier_name), ("Uncommitted", "Uncommitted"))
+            uow.rollback()
+        with UnitOfWork(self.config) as uow:
+            self.assertIsNone(MaterialRepository(uow.connection).get(material_id))
+            self.assertIsNone(SupplierRepository(uow.connection).get(supplier_id))
 
     def add_movement(self, connection, kind, plan_id=None, quantity=Decimal("50")):
         movements = MovementRepository(connection)
