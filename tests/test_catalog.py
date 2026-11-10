@@ -13,7 +13,8 @@ from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
 from semantic_entry.modules.warehouse.enums import FilmType
-from semantic_entry.modules.warehouse.postgres.catalog import (
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRecord,
     CustomerRepository,
     FilmTypeRecord,
@@ -23,7 +24,6 @@ from semantic_entry.modules.warehouse.postgres.catalog import (
     SupplierRecord,
     SupplierRepository,
 )
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.service import Warehouse
 

@@ -20,7 +20,7 @@ from semantic_entry.modules.warehouse.commands.receipts import (
     RecordReceiptInput,
     RecordReceiptResult,
 )
-from semantic_entry.modules.warehouse.postgres.receipt_preview import (
+from semantic_entry.modules.warehouse.postgres.handlers.receipt_preview import (
     ReceiptPreviewHandler,
 )
 

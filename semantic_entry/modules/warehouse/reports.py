@@ -4,7 +4,9 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
-from semantic_entry.modules.warehouse.postgres.reports import ReportRepository
+from semantic_entry.modules.warehouse.postgres.repositories.reports import (
+    ReportRepository,
+)
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 if TYPE_CHECKING:

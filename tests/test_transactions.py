@@ -14,12 +14,12 @@ from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
 from semantic_entry.modules.warehouse.enums import TransactionType
-from semantic_entry.modules.warehouse.postgres.catalog import (
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     FilmTypeRepository,
     MaterialRepository,
 )
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
-from semantic_entry.modules.warehouse.postgres.transactions import (
+from semantic_entry.modules.warehouse.postgres.repositories.transactions import (
     TransactionRecord,
     TransactionRepository,
 )

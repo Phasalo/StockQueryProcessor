@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from semantic_entry.modules.warehouse.postgres.reports import ReportRepository
+from semantic_entry.modules.warehouse.postgres.repositories.reports import (
+    ReportRepository,
+)
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.queries import GetStockResult
 

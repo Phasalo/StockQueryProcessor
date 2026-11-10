@@ -6,9 +6,9 @@ from psycopg2.extensions import connection
 from pypika import Parameter, PostgreSQLQuery, Table
 
 from semantic_entry.modules.warehouse.enums import TransactionType
-from semantic_entry.modules.warehouse.postgres.locks import lock_material
-from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
-from semantic_entry.modules.warehouse.postgres.transactions import (
+from semantic_entry.modules.warehouse.postgres.repositories.locks import lock_material
+from semantic_entry.modules.warehouse.postgres.repositories.plans import PlanRepository
+from semantic_entry.modules.warehouse.postgres.repositories.transactions import (
     TransactionRepository,
     validate_quantity,
 )

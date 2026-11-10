@@ -4,21 +4,23 @@ from decimal import Decimal
 
 from config import WarehouseConfig
 from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
-from semantic_entry.modules.warehouse.postgres.catalog import (
+from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRepository,
     FilmTypeRepository,
     MaterialRecord,
     MaterialRepository,
     SupplierRepository,
 )
-from semantic_entry.modules.warehouse.postgres.locks import lock_material
-from semantic_entry.modules.warehouse.postgres.movements import MovementRepository
-from semantic_entry.modules.warehouse.postgres.plans import (
+from semantic_entry.modules.warehouse.postgres.repositories.locks import lock_material
+from semantic_entry.modules.warehouse.postgres.repositories.movements import (
+    MovementRepository,
+)
+from semantic_entry.modules.warehouse.postgres.repositories.plans import (
     PlanCancellationRecord,
     PlanRecord,
     PlanRepository,
 )
-from semantic_entry.modules.warehouse.postgres.transactions import (
+from semantic_entry.modules.warehouse.postgres.repositories.transactions import (
     TransactionRepository,
     validate_quantity,
 )

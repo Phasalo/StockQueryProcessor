@@ -8,7 +8,9 @@ from pypika import Order, Parameter, PostgreSQLQuery, Table, functions
 
 from semantic_entry.modules.warehouse.enums import TransactionType
 from semantic_entry.modules.warehouse.models import StockBalance
-from semantic_entry.modules.warehouse.postgres.plan_queries import select_plans
+from semantic_entry.modules.warehouse.postgres.repositories.plan_queries import (
+    select_plans,
+)
 
 
 @dataclass(frozen=True)

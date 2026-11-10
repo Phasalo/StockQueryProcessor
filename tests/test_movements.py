@@ -27,24 +27,26 @@ from semantic_entry.modules.warehouse.commands.receipts import (
     RecordReceiptInput,
 )
 from semantic_entry.modules.warehouse.enums import TransactionType
-from semantic_entry.modules.warehouse.postgres.catalog import (
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.handlers.receipt_preview import (
+    ReceiptPreviewer,
+    ReceiptPreviewHandler,
+)
+from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRepository,
     FilmTypeRepository,
     MaterialRepository,
     SupplierRepository,
 )
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
-from semantic_entry.modules.warehouse.postgres.movements import (
+from semantic_entry.modules.warehouse.postgres.repositories.movements import (
     IssueRecord,
     MovementRepository,
     ReceiptRecord,
 )
-from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
-from semantic_entry.modules.warehouse.postgres.receipt_preview import (
-    ReceiptPreviewer,
-    ReceiptPreviewHandler,
+from semantic_entry.modules.warehouse.postgres.repositories.plans import PlanRepository
+from semantic_entry.modules.warehouse.postgres.repositories.transactions import (
+    TransactionRepository,
 )
-from semantic_entry.modules.warehouse.postgres.transactions import TransactionRepository
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.service import Warehouse
 

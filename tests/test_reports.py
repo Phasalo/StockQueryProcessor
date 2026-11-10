@@ -20,21 +20,25 @@ from config import WarehouseConfig
 from semantic_entry.core import Actor, CommandCatalog, CommandRegistry, QueryExecutor
 from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
 from semantic_entry.modules.warehouse.models import StockBalance
-from semantic_entry.modules.warehouse.postgres.catalog import (
+from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.modules.warehouse.postgres.handlers.stock import StockQueryHandler
+from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRepository,
     FilmTypeRepository,
     MaterialRepository,
     SupplierRepository,
 )
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
-from semantic_entry.modules.warehouse.postgres.movements import MovementRepository
-from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
-from semantic_entry.modules.warehouse.postgres.reports import (
+from semantic_entry.modules.warehouse.postgres.repositories.movements import (
+    MovementRepository,
+)
+from semantic_entry.modules.warehouse.postgres.repositories.plans import PlanRepository
+from semantic_entry.modules.warehouse.postgres.repositories.reports import (
     JournalRecord,
     ReportRepository,
 )
-from semantic_entry.modules.warehouse.postgres.stock import StockQueryHandler
-from semantic_entry.modules.warehouse.postgres.transactions import TransactionRepository
+from semantic_entry.modules.warehouse.postgres.repositories.transactions import (
+    TransactionRepository,
+)
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.queries import GET_STOCK_SPEC, GetStockResult
 from semantic_entry.modules.warehouse.reports import WarehouseReports

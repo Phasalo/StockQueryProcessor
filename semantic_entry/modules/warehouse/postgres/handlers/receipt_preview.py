@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING
 from semantic_entry.core import FieldError
 from semantic_entry.core.contracts import PreviewResult
 from semantic_entry.modules.warehouse.commands.receipts import ReceiptPreview
-from semantic_entry.modules.warehouse.postgres.catalog import (
+from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     MaterialRepository,
     SupplierRepository,
 )
-from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
+from semantic_entry.modules.warehouse.postgres.repositories.plans import PlanRepository
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 if TYPE_CHECKING:

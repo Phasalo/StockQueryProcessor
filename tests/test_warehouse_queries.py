@@ -14,7 +14,7 @@ from semantic_entry.core import (
     PermissionDeniedError,
     QueryExecutor,
 )
-from semantic_entry.modules.warehouse.postgres.stock import StockQueryHandler
+from semantic_entry.modules.warehouse.postgres.handlers.stock import StockQueryHandler
 from semantic_entry.modules.warehouse.queries import GET_STOCK_SPEC, GetStockInput
 
 
