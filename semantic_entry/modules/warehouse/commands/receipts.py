@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from pydantic import Field, StrictInt
 
-from semantic_entry.core import CommandEffect, CommandModel, CommandSpec, FieldError
+from semantic_entry.core import CommandEffect, CommandModel, CommandSpec
 
 
 class RecordReceiptInput(CommandModel):
@@ -27,15 +27,6 @@ class ReceiptPreview(CommandModel):
     thickness: StrictInt = Field(gt=0)
     supplier_name: str
     plan_remaining_quantity_kg: Decimal | None = None
-
-
-class ReceiptPreviewResult(CommandModel):
-    preview: ReceiptPreview | None = None
-    errors: tuple[FieldError, ...] = ()
-
-    @property
-    def is_valid(self) -> bool:
-        return self.preview is not None and not self.errors
 
 
 RECORD_RECEIPT_SPEC = CommandSpec(

@@ -9,7 +9,7 @@ from decimal import Decimal
 from os import environ, getenv
 from pathlib import Path
 from threading import Barrier
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import psycopg2
@@ -17,7 +17,9 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
 from config import WarehouseConfig
+from semantic_entry.core import Actor, CommandCatalog, CommandPreparer, CommandRegistry
 from semantic_entry.modules.warehouse.commands.receipts import (
+    RECORD_RECEIPT_SPEC,
     ReceiptPreview,
     RecordReceiptInput,
 )
@@ -35,7 +37,10 @@ from semantic_entry.modules.warehouse.postgres.movements import (
     ReceiptRecord,
 )
 from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
-from semantic_entry.modules.warehouse.postgres.receipt_preview import ReceiptPreviewer
+from semantic_entry.modules.warehouse.postgres.receipt_preview import (
+    ReceiptPreviewer,
+    ReceiptPreviewHandler,
+)
 from semantic_entry.modules.warehouse.postgres.transactions import TransactionRepository
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.service import Warehouse
@@ -120,6 +125,34 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
     def receipt_preview(self, **changes):
         with UnitOfWork(self.config) as uow:
             return ReceiptPreviewer(uow.connection).preview(self.receipt_parameters(**changes))
+
+    def receipt_preparation(self, **changes):
+        registry = CommandRegistry()
+        registry.register(RECORD_RECEIPT_SPEC)
+        authorizer = Mock()
+        authorizer.is_allowed.return_value = True
+        preparer = CommandPreparer(CommandCatalog(registry, authorizer))
+        preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(self.config))
+        payload = self.receipt_parameters(**changes).model_dump(mode="json")
+        return preparer.prepare("warehouse.record_receipt", 1, payload, Actor("receiver"))
+
+    def test_receipt_preparation_builds_preview_through_core(self):
+        result = self.receipt_preparation()
+        self.assertTrue(result.is_valid)
+        self.assertIsInstance(result.preview, ReceiptPreview)
+        self.assertEqual(result.actor_id, "receiver")
+        self.assertEqual(result.preview.parameters.quantity_kg, Decimal("12.50"))
+        self.assertEqual(result.preview.supplier_name, "Supplier")
+        self.assertEqual(self.count_rows("transactions"), 0)
+        self.assertEqual(self.count_rows("receipts"), 0)
+
+    def test_receipt_preparation_returns_domain_errors_through_core(self):
+        result = self.receipt_preparation(material_id=999999)
+        self.assertFalse(result.is_valid)
+        self.assertIsNone(result.preview)
+        self.assertEqual(result.validated_input.material_id, 999999)
+        self.assertEqual([(error.path, error.code) for error in result.errors], [(("material_id",), "not_found")])
+        self.assertEqual(self.count_rows("transactions"), 0)
 
     def test_receipt_preview_returns_card_without_creating_movement(self):
         result = self.receipt_preview()

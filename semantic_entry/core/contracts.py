@@ -85,6 +85,18 @@ class FieldError:
     message: str
 
 
+PreviewT = TypeVar("PreviewT", bound=CommandModel)
+
+
+class PreviewResult(CommandModel, Generic[PreviewT]):
+    preview: PreviewT | None = None
+    errors: tuple[FieldError, ...] = ()
+
+    @property
+    def is_valid(self) -> bool:
+        return self.preview is not None and not self.errors
+
+
 @dataclass(frozen=True)
 class PreparationResult:
     command_name: str
@@ -92,6 +104,7 @@ class PreparationResult:
     actor_id: str
     validated_input: CommandModel | None
     errors: tuple[FieldError, ...] = ()
+    preview: CommandModel | None = None
 
     @property
     def is_valid(self) -> bool:

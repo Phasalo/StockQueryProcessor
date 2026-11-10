@@ -3,19 +3,20 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from semantic_entry.core import FieldError
-from semantic_entry.modules.warehouse.commands.receipts import (
-    ReceiptPreview,
-    ReceiptPreviewResult,
-)
+from semantic_entry.core.contracts import PreviewResult
+from semantic_entry.modules.warehouse.commands.receipts import ReceiptPreview
 from semantic_entry.modules.warehouse.postgres.catalog import (
     MaterialRepository,
     SupplierRepository,
 )
 from semantic_entry.modules.warehouse.postgres.plans import PlanRepository
+from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 if TYPE_CHECKING:
     from psycopg2.extensions import connection
 
+    from config import WarehouseConfig
+    from semantic_entry.core import Actor
     from semantic_entry.modules.warehouse.commands.receipts import RecordReceiptInput
 
 
@@ -23,7 +24,7 @@ class ReceiptPreviewer:
     def __init__(self, connection: connection):
         self._connection = connection
 
-    def preview(self, parameters: RecordReceiptInput) -> ReceiptPreviewResult:
+    def preview(self, parameters: RecordReceiptInput) -> PreviewResult[ReceiptPreview]:
         material = MaterialRepository(self._connection).get(parameters.material_id)
         supplier = SupplierRepository(self._connection).get(parameters.supplier_id)
         errors = []
@@ -44,8 +45,8 @@ class ReceiptPreviewer:
                 if plan.is_closed:
                     errors.append(FieldError(("planned_receipt_id",), "plan_closed", "План прихода уже закрыт."))
         if errors:
-            return ReceiptPreviewResult(errors=tuple(errors))
-        return ReceiptPreviewResult(preview=ReceiptPreview(
+            return PreviewResult[ReceiptPreview](errors=tuple(errors))
+        return PreviewResult[ReceiptPreview](preview=ReceiptPreview(
             parameters=parameters,
             film_type_code=material.film_type_code,
             brand=material.brand,
@@ -54,3 +55,13 @@ class ReceiptPreviewer:
             supplier_name=supplier.name,
             plan_remaining_quantity_kg=plan.remaining_quantity_kg if plan is not None else None,
         ))
+
+
+class ReceiptPreviewHandler:
+    def __init__(self, config: WarehouseConfig):
+        self._config = config
+
+    def __call__(self, parameters: RecordReceiptInput, actor: Actor) -> PreviewResult[ReceiptPreview]:
+        with UnitOfWork(self._config) as uow:
+            uow.connection.set_session(isolation_level="REPEATABLE READ", readonly=True)
+            return ReceiptPreviewer(uow.connection).preview(parameters)
