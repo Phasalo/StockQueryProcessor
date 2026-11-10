@@ -64,6 +64,14 @@ class MemoryDraftStore:
             self._drafts[draft_id] = deepcopy(updated)
             return deepcopy(updated)
 
+    def cancel(self, draft_id: UUID, expected_version: int, actor: Actor) -> CommandDraft:
+        with self._lock:
+            current = self._get_owned(draft_id, actor)
+            current.require_editable(expected_version)
+            cancelled = replace(current, version=current.version + 1, state=DraftState.CANCELLED)
+            self._drafts[draft_id] = cancelled
+            return deepcopy(cancelled)
+
     def _get_owned(self, draft_id: UUID, actor: Actor) -> CommandDraft:
         draft = self._drafts[draft_id]
         if draft.preparation.actor_id != actor.actor_id:

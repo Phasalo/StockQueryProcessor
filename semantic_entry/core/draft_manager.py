@@ -33,3 +33,6 @@ class DraftManager:
         return self._store.update(
             draft_id, expected_version, actor, payload=payload, preparation=prepared,
         )
+
+    def cancel(self, draft_id: UUID, expected_version: int, actor: Actor) -> CommandDraft:
+        return self._store.cancel(draft_id, expected_version, actor)
