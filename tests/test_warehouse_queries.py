@@ -1,11 +1,10 @@
 import subprocess
 import sys
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from pydantic import ValidationError
 
-from config import WarehouseConfig
 from semantic_entry.core.access import Actor, PermissionDeniedError
 from semantic_entry.core.commands.catalog import CommandCatalog
 from semantic_entry.core.commands.preparation import CommandPreparer
@@ -23,35 +22,33 @@ class WarehouseStockQueryTest(unittest.TestCase):
         self.authorizer.is_allowed.return_value = True
         self.catalog = CommandCatalog(self.registry, self.authorizer)
         self.executor = QueryExecutor(self.catalog)
-        self.executor.register(GET_STOCK_SPEC, StockQueryHandler(WarehouseConfig()))
+        self.uow_factory = Mock(side_effect=AssertionError("Unexpected transaction"))
+        self.executor.register(GET_STOCK_SPEC, StockQueryHandler(self.uow_factory))
         self.actor = Actor("stock-reader")
 
     def test_invalid_material_id_is_rejected_before_connection(self):
-        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
-            for payload in ({}, {"material_id": True}, {"material_id": 0}, {"material_id": -1}, {"material_id": "1"}, {"material_id": 1, "extra": 1}):
-                with self.subTest(payload=payload):
-                    with self.assertRaises(ValidationError):
-                        self.executor.query("warehouse.get_stock", 1, payload, self.actor)
-            connect.assert_not_called()
+        for payload in ({}, {"material_id": True}, {"material_id": 0}, {"material_id": -1}, {"material_id": "1"}, {"material_id": 1, "extra": 1}):
+            with self.subTest(payload=payload):
+                with self.assertRaises(ValidationError):
+                    self.executor.query("warehouse.get_stock", 1, payload, self.actor)
+        self.uow_factory.assert_not_called()
 
     def test_permission_is_checked_before_connection(self):
         self.authorizer.is_allowed.return_value = False
-        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
-            with self.assertRaises(PermissionDeniedError):
-                self.executor.query("warehouse.get_stock", 1, {"material_id": 1}, self.actor)
-            connect.assert_not_called()
+        with self.assertRaises(PermissionDeniedError):
+            self.executor.query("warehouse.get_stock", 1, {"material_id": 1}, self.actor)
+        self.uow_factory.assert_not_called()
         self.authorizer.is_allowed.assert_called_once_with(self.actor, "warehouse.stock.read")
 
     def test_prepare_validates_warehouse_input_without_connection(self):
         preparer = CommandPreparer(self.catalog)
-        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
-            missing = preparer.prepare("warehouse.get_stock", 1, {}, self.actor)
-            valid = preparer.prepare("warehouse.get_stock", 1, {"material_id": 42}, self.actor)
-            self.assertEqual(missing.missing_fields, (("material_id",),))
-            self.assertTrue(valid.is_valid)
-            self.assertIsInstance(valid.validated_input, GetStockInput)
-            self.assertEqual(valid.validated_input.material_id, 42)
-            connect.assert_not_called()
+        missing = preparer.prepare("warehouse.get_stock", 1, {}, self.actor)
+        valid = preparer.prepare("warehouse.get_stock", 1, {"material_id": 42}, self.actor)
+        self.assertEqual(missing.missing_fields, (("material_id",),))
+        self.assertTrue(valid.is_valid)
+        self.assertIsInstance(valid.validated_input, GetStockInput)
+        self.assertEqual(valid.validated_input.material_id, 42)
+        self.uow_factory.assert_not_called()
 
     def test_query_schema_exposes_required_positive_integer(self):
         schema = GET_STOCK_SPEC.input_json_schema()

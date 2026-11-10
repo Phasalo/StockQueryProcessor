@@ -14,9 +14,9 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
-from config import WarehouseConfig
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
+from semantic_entry.adapters.postgres.config import PostgresConfig
+from semantic_entry.adapters.postgres.connection import create_connection
+from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 
 ROOT = Path(__file__).resolve().parent.parent
 MIGRATION_PATH = ROOT / "migrations" / "V001__initial_warehouse.sql"
@@ -29,7 +29,7 @@ class InitialMigrationPostgresTest(unittest.TestCase):
         if not dsn:
             raise unittest.SkipTest("Set TEST_DATABASE_DSN to run PostgreSQL tests")
         settings = parse_dsn(dsn)
-        cls.admin_config = WarehouseConfig(
+        cls.admin_config = PostgresConfig(
             database=settings["dbname"],
             user=settings["user"],
             password=settings.get("password", ""),

@@ -18,10 +18,13 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 from pydantic import StrictInt, ValidationError
 
-from config import WarehouseConfig
+from app.bootstrap import build_engine
 from semantic_entry.adapters.memory.drafts import MemoryDraftStore
+from semantic_entry.adapters.postgres.config import PostgresConfig
+from semantic_entry.adapters.postgres.connection import create_connection
 from semantic_entry.adapters.postgres.executions import PostgresExecutionStore
 from semantic_entry.adapters.postgres.transaction import PostgresCommandTransaction
+from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 from semantic_entry.core.access import Actor, PermissionDeniedError
 from semantic_entry.core.commands.catalog import CommandCatalog
 from semantic_entry.core.commands.models import (
@@ -46,7 +49,6 @@ from semantic_entry.core.engine import Engine
 from semantic_entry.core.executions.models import IdempotencyConflictError
 from semantic_entry.modules.warehouse.bootstrap import build_warehouse_engine
 from semantic_entry.modules.warehouse.commands.receipts import RecordReceiptResult
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
 from semantic_entry.modules.warehouse.postgres.handlers.receipt_execution import (
     RecordReceiptHandler,
 )
@@ -56,7 +58,6 @@ from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     SupplierRepository,
 )
 from semantic_entry.modules.warehouse.postgres.repositories.plans import PlanRepository
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -93,7 +94,7 @@ class EnginePostgresTest(unittest.TestCase):
         if not dsn:
             raise unittest.SkipTest("Set TEST_DATABASE_DSN to run PostgreSQL tests")
         settings = parse_dsn(dsn)
-        cls.admin_config = WarehouseConfig(
+        cls.admin_config = PostgresConfig(
             database=settings["dbname"], user=settings["user"], password=settings.get("password", ""),
             host=settings["host"], port=int(settings.get("port", 5432)),
         )
@@ -137,7 +138,7 @@ class EnginePostgresTest(unittest.TestCase):
         self.now = datetime(2026, 11, 10, 12, tzinfo=UTC)
         self.clock = Mock(return_value=self.now)
         self.drafts = MemoryDraftStore(self.clock)
-        self.engine = build_warehouse_engine(self.config, self.policy, drafts=self.drafts)
+        self.engine = build_warehouse_engine(lambda: UnitOfWork(self.config), self.policy, drafts=self.drafts)
 
     def query(self, statement, parameters=()):
         with UnitOfWork(self.config) as uow:
@@ -162,6 +163,7 @@ class EnginePostgresTest(unittest.TestCase):
             return PlanRepository(uow.connection).add_receipt(self.material_id, self.supplier_id, date(2026, 11, 1), date(2026, 11, 10), Decimal("100"))
 
     def test_complete_receipt_flow_and_durable_request_audit(self):
+        self.engine = build_engine(self.config, self.policy, drafts=self.drafts)
         draft = self.prepare()
         self.assertEqual(self.counts(), (0, 0, 0, 0))
         self.assertEqual(self.query("SELECT count(*) FROM transactions"), [(0,)])
@@ -245,7 +247,7 @@ class EnginePostgresTest(unittest.TestCase):
     def test_committed_result_is_recovered_after_loss_of_memory(self):
         draft = self.prepare()
         result = self.confirm(draft)
-        restarted = build_warehouse_engine(self.config, self.policy)
+        restarted = build_warehouse_engine(lambda: UnitOfWork(self.config), self.policy, drafts=MemoryDraftStore())
         self.assertEqual(self.confirm(draft, engine=restarted), result)
         self.assertEqual(self.confirm(draft, "after-restart", engine=restarted), result)
         self.assertEqual(self.counts(), (1, 1, 2, 1))
@@ -254,7 +256,7 @@ class EnginePostgresTest(unittest.TestCase):
 
     def test_unconfirmed_lost_draft_is_not_reconstructed_from_request(self):
         draft = self.prepare()
-        restarted = build_warehouse_engine(self.config, self.policy)
+        restarted = build_warehouse_engine(lambda: UnitOfWork(self.config), self.policy, drafts=MemoryDraftStore())
         with self.assertRaises(DraftNotFoundError):
             self.confirm(draft, engine=restarted)
         self.assertEqual(self.counts(), (0, 0, 0, 0))
@@ -262,7 +264,7 @@ class EnginePostgresTest(unittest.TestCase):
     def test_recovered_result_still_requires_author_and_permission(self):
         draft = self.prepare()
         self.confirm(draft)
-        restarted = build_warehouse_engine(self.config, self.policy)
+        restarted = build_warehouse_engine(lambda: UnitOfWork(self.config), self.policy, drafts=MemoryDraftStore())
         with self.assertRaises(PermissionDeniedError):
             self.confirm(draft, "other-author", actor=Actor("bob"), engine=restarted)
         self.policy.is_allowed.return_value = False
@@ -402,7 +404,7 @@ class EnginePostgresTest(unittest.TestCase):
 
     def test_invalid_confirmation_metadata_is_rejected_before_connection(self):
         draft = self.prepare()
-        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
+        with patch("semantic_entry.adapters.postgres.unit_of_work.create_connection") as connect:
             for version in (True, 0, "1"):
                 with self.subTest(version=version):
                     with self.assertRaises(ValueError):
@@ -520,8 +522,8 @@ class EnginePostgresTest(unittest.TestCase):
         self.assertEqual(self.counts(), (0, 1, 1, 1))
 
     def test_bootstrap_does_not_connect_and_read_is_not_prepared_as_write(self):
-        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
-            engine = build_warehouse_engine(self.config, self.policy)
+        with patch("semantic_entry.adapters.postgres.unit_of_work.create_connection") as connect:
+            engine = build_warehouse_engine(lambda: UnitOfWork(self.config), self.policy, drafts=MemoryDraftStore())
             with self.assertRaisesRegex(ValueError, "WRITE"):
                 engine.prepare("warehouse.get_stock", 1, {"material_id": self.material_id}, self.actor, lifetime=timedelta(minutes=10))
             connect.assert_not_called()

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from semantic_entry.adapters.memory.drafts import MemoryDraftStore
 from semantic_entry.adapters.postgres.transaction import PostgresCommandTransaction
 from semantic_entry.core.commands.catalog import CommandCatalog
 from semantic_entry.core.commands.preparation import CommandPreparer
@@ -20,12 +19,14 @@ from semantic_entry.modules.warehouse.postgres.handlers.receipt_preview import (
     ReceiptPreviewHandler,
 )
 from semantic_entry.modules.warehouse.postgres.handlers.stock import StockQueryHandler
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.queries.stock import GET_STOCK_SPEC
 
 if TYPE_CHECKING:
-    from config import WarehouseConfig
+    from collections.abc import Callable
+
+    from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
     from semantic_entry.core.ports.authorization import Authorizer
+    from semantic_entry.core.ports.drafts import DraftStore
     from semantic_entry.core.ports.execution import CommandTransaction
 
 
@@ -36,19 +37,19 @@ def _receipt_handler(transaction: CommandTransaction) -> RecordReceiptHandler:
 
 
 def build_warehouse_engine(
-    config: WarehouseConfig, authorizer: Authorizer, *, drafts: MemoryDraftStore | None = None,
+    uow_factory: Callable[[], UnitOfWork], authorizer: Authorizer, *, drafts: DraftStore,
 ) -> Engine:
     registry = CommandRegistry()
     registry.register(RECORD_RECEIPT_SPEC)
     registry.register(GET_STOCK_SPEC)
     catalog = CommandCatalog(registry, authorizer)
     preparer = CommandPreparer(catalog)
-    preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(config))
+    preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(uow_factory))
     queries = QueryExecutor(catalog)
-    queries.register(GET_STOCK_SPEC, StockQueryHandler(config))
+    queries.register(GET_STOCK_SPEC, StockQueryHandler(uow_factory))
     engine = Engine(
-        catalog, preparer, queries, drafts if drafts is not None else MemoryDraftStore(),
-        lambda: PostgresCommandTransaction(UnitOfWork(config)),
+        catalog, preparer, queries, drafts,
+        lambda: PostgresCommandTransaction(uow_factory()),
     )
     engine.register_write(RECORD_RECEIPT_SPEC, ReceiptPreview, _receipt_handler)
     return engine

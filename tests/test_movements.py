@@ -17,8 +17,10 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 from pydantic import ValidationError
 
-from config import WarehouseConfig
 from semantic_entry.adapters.memory.drafts import MemoryDraftStore
+from semantic_entry.adapters.postgres.config import PostgresConfig
+from semantic_entry.adapters.postgres.connection import create_connection
+from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 from semantic_entry.core.access import Actor
 from semantic_entry.core.commands.catalog import CommandCatalog
 from semantic_entry.core.commands.preparation import CommandPreparer
@@ -32,7 +34,6 @@ from semantic_entry.modules.warehouse.commands.receipts import (
     RecordReceiptResult,
 )
 from semantic_entry.modules.warehouse.enums import TransactionType
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
 from semantic_entry.modules.warehouse.postgres.handlers.receipt_execution import (
     RecordReceiptHandler,
 )
@@ -55,7 +56,6 @@ from semantic_entry.modules.warehouse.postgres.repositories.plans import PlanRep
 from semantic_entry.modules.warehouse.postgres.repositories.transactions import (
     TransactionRepository,
 )
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.service import Warehouse
 
 
@@ -66,7 +66,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
         if not dsn:
             raise unittest.SkipTest("Set TEST_DATABASE_DSN to run PostgreSQL tests")
         settings = parse_dsn(dsn)
-        cls.admin_config = WarehouseConfig(
+        cls.admin_config = PostgresConfig(
             database=settings["dbname"], user=settings["user"],
             password=settings.get("password", ""), host=settings["host"],
             port=int(settings.get("port", 5432)),
@@ -145,7 +145,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
         authorizer = Mock()
         authorizer.is_allowed.return_value = True
         preparer = CommandPreparer(CommandCatalog(registry, authorizer))
-        preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(self.config))
+        preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(lambda: UnitOfWork(self.config)))
         return preparer
 
     def receipt_preparation(self, **changes):
@@ -408,7 +408,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
             return movements.get_receipt(movement_id) if kind == "receipt" else movements.get_issue(movement_id)
 
     def test_facade_adjustments_store_signed_deltas_and_allow_negative_balance(self):
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         positive_id = warehouse.create_adjustment(self.material_id, Decimal("10"))
         negative_id = warehouse.create_adjustment(self.material_id, Decimal("-25"))
         self.assertNotEqual(positive_id, negative_id)
@@ -431,7 +431,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
     def test_facade_adjustment_does_not_change_plans_or_cancellations(self):
         receipt_plan = self.create_plan("receipt")
         issue_plan = self.create_plan("issue")
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         warehouse.cancel_plan(receipt_plan.transaction_id, Decimal("10"), "Partial")
         with UnitOfWork(self.config) as uow:
             plans = PlanRepository(uow.connection)
@@ -456,12 +456,12 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
         for quantity, error in cases:
             with self.subTest(quantity=quantity):
                 with self.assertRaises(error):
-                    Warehouse(self.config).create_adjustment(self.material_id, quantity)
+                    Warehouse(lambda: UnitOfWork(self.config)).create_adjustment(self.material_id, quantity)
         self.assertEqual(self.count_rows("transactions"), 0)
 
     def test_facade_adjustment_requires_existing_material(self):
         with self.assertRaisesRegex(ValueError, "не найден"):
-            Warehouse(self.config).create_adjustment(999999, Decimal("10"))
+            Warehouse(lambda: UnitOfWork(self.config)).create_adjustment(999999, Decimal("10"))
         self.assertEqual(self.count_rows("transactions"), 0)
 
     def test_facade_adjustment_obeys_material_lock(self):
@@ -474,16 +474,16 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
         with UnitOfWork(self.config) as holder:
             with holder.connection.cursor() as cursor:
                 cursor.execute("SELECT id FROM materials WHERE id = %s FOR UPDATE", (self.material_id,))
-            with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection", side_effect=open_with_timeout):
+            with patch("semantic_entry.adapters.postgres.unit_of_work.create_connection", side_effect=open_with_timeout):
                 with self.assertRaises(psycopg2.errors.LockNotAvailable):
-                    Warehouse(self.config).create_adjustment(self.material_id, Decimal("10"))
+                    Warehouse(lambda: UnitOfWork(self.config)).create_adjustment(self.material_id, Decimal("10"))
         self.assertEqual(self.count_rows("transactions"), 0)
 
     def test_facade_receipt_preserves_positional_arguments_and_uses_plan_supplier(self):
         with UnitOfWork(self.config) as uow:
             TransactionRepository(uow.connection).add("ADJUSTMENT", self.material_id, Decimal("1"))
         plan = self.create_plan("receipt")
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         warehouse.cancel_plan(plan.transaction_id, Decimal("30"), "Partial")
         transaction_id = warehouse.create_receipt(
             self.material_id, plan.id, self.actual_date, Decimal("150"),
@@ -503,7 +503,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
         self.assertEqual(current["remaining_quantity_kg"], Decimal("0"))
 
     def test_facade_unplanned_receipt_requires_explicit_supplier(self):
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         with self.assertRaisesRegex(ValueError, "supplier_id"):
             warehouse.create_receipt(self.material_id, None, self.actual_date, Decimal("10"))
         self.assertEqual(self.count_rows("transactions"), 0)
@@ -518,7 +518,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
 
     def test_facade_planned_receipt_checks_explicit_supplier(self):
         plan = self.create_plan("receipt")
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         with self.assertRaisesRegex(ValueError, "Контрагент"):
             warehouse.create_receipt(
                 self.material_id, plan.id, self.actual_date, Decimal("10"),
@@ -534,7 +534,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
 
     def test_facade_invalid_receipt_plan_does_not_create_fact(self):
         plan = self.create_plan("receipt")
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         for material_id, plan_id, supplier in (
             (self.material_id, 999999, None),
             (self.material_id, 999999, self.supplier_id),
@@ -550,14 +550,14 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
 
     def test_facade_missing_receipt_date_rolls_back_journal(self):
         with self.assertRaises(psycopg2.errors.NotNullViolation):
-            Warehouse(self.config).create_receipt(
+            Warehouse(lambda: UnitOfWork(self.config)).create_receipt(
                 self.material_id, None, None, Decimal("10"), supplier_id=self.supplier_id,
             )
         self.assertEqual(self.count_rows("transactions"), 0)
         self.assertEqual(self.count_rows("receipts"), 0)
 
     def test_facade_issue_allows_negative_stock_and_explicitly_absent_date(self):
-        transaction_id = Warehouse(self.config).create_issue(
+        transaction_id = Warehouse(lambda: UnitOfWork(self.config)).create_issue(
             self.material_id, self.customer_id, None, Decimal("-150"),
         )
         issue = self.saved_movement("issue", transaction_id)
@@ -577,7 +577,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
         with UnitOfWork(self.config) as uow:
             TransactionRepository(uow.connection).add("ADJUSTMENT", self.material_id, Decimal("1"))
         plan = self.create_plan("issue")
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         warehouse.cancel_plan(plan.transaction_id, Decimal("30"), "Partial")
         transaction_id = warehouse.create_issue(
             self.material_id, self.customer_id, self.actual_date, Decimal("-150"),
@@ -603,7 +603,7 @@ class MovementRepositoryPostgresTest(unittest.TestCase):
 
     def test_facade_issue_requires_matching_customer_and_negative_delta(self):
         plan = self.create_plan("issue")
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         for customer_id, quantity in (
             (self.other_customer_id, Decimal("-10")),
             (self.customer_id, Decimal("10")),

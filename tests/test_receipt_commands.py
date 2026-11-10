@@ -1,11 +1,10 @@
 import unittest
 from datetime import date
 from decimal import Decimal
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from pydantic import ValidationError
 
-from config import WarehouseConfig
 from semantic_entry.core.access import Actor, PermissionDeniedError
 from semantic_entry.core.commands.catalog import CommandCatalog
 from semantic_entry.core.commands.preparation import CommandPreparer
@@ -107,20 +106,20 @@ class RecordReceiptCommandTest(unittest.TestCase):
             executor.query("warehouse.record_receipt", 1, self.payload, self.actor)
 
     def test_invalid_input_does_not_open_preview_connection(self):
-        self.preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(WarehouseConfig()))
-        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
-            result = self.prepare({})
-            self.assertFalse(result.is_valid)
-            self.assertEqual(result.missing_fields, (("material_id",), ("supplier_id",), ("actual_date",), ("quantity_kg",)))
-            connect.assert_not_called()
+        factory = Mock(side_effect=AssertionError("Unexpected transaction"))
+        self.preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(factory))
+        result = self.prepare({})
+        self.assertFalse(result.is_valid)
+        self.assertEqual(result.missing_fields, (("material_id",), ("supplier_id",), ("actual_date",), ("quantity_kg",)))
+        factory.assert_not_called()
 
     def test_denied_access_does_not_open_preview_connection(self):
-        self.preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(WarehouseConfig()))
+        factory = Mock(side_effect=AssertionError("Unexpected transaction"))
+        self.preparer.register_preview(RECORD_RECEIPT_SPEC, ReceiptPreview, ReceiptPreviewHandler(factory))
         self.authorizer.is_allowed.return_value = False
-        with patch("semantic_entry.modules.warehouse.postgres.unit_of_work.create_connection") as connect:
-            with self.assertRaises(PermissionDeniedError):
-                self.prepare(self.payload)
-            connect.assert_not_called()
+        with self.assertRaises(PermissionDeniedError):
+            self.prepare(self.payload)
+        factory.assert_not_called()
 
     def test_result_distinguishes_transaction_and_receipt_identifiers(self):
         result = RECORD_RECEIPT_SPEC.validate_result({"transaction_id": 10, "receipt_id": 3})

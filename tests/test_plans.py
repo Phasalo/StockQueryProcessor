@@ -15,8 +15,9 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
-from config import WarehouseConfig
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.adapters.postgres.config import PostgresConfig
+from semantic_entry.adapters.postgres.connection import create_connection
+from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRepository,
     FilmTypeRepository,
@@ -27,7 +28,6 @@ from semantic_entry.modules.warehouse.postgres.repositories.plans import PlanRep
 from semantic_entry.modules.warehouse.postgres.repositories.transactions import (
     TransactionRepository,
 )
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.service import Warehouse
 
 
@@ -38,7 +38,7 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
         if not dsn:
             raise unittest.SkipTest("Set TEST_DATABASE_DSN to run PostgreSQL tests")
         settings = parse_dsn(dsn)
-        cls.admin_config = WarehouseConfig(
+        cls.admin_config = PostgresConfig(
             database=settings["dbname"], user=settings["user"],
             password=settings.get("password", ""), host=settings["host"],
             port=int(settings.get("port", 5432)),
@@ -261,7 +261,7 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
 
     def test_cancellation_cannot_exceed_remaining_quantity(self):
         plan = self.create_plan()
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         warehouse.cancel_plan(plan.transaction_id, Decimal("30"), "First")
         with self.assertRaisesRegex(ValueError, "превышает"):
             warehouse.cancel_plan(plan.transaction_id, Decimal("80"), "Too much")
@@ -280,7 +280,7 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
         for quantity, reason in cases:
             with self.subTest(quantity=quantity, reason=reason):
                 with self.assertRaises(ValueError):
-                    Warehouse(self.config).cancel_plan(plan.transaction_id, quantity, reason)
+                    Warehouse(lambda: UnitOfWork(self.config)).cancel_plan(plan.transaction_id, quantity, reason)
         self.assertEqual(self.count_rows("plan_cancellations"), 0)
 
     def test_recorded_fact_closes_entire_plan_and_prevents_cancellation(self):
@@ -300,7 +300,7 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
                     )
                     self.assertEqual(opened, [])
                 with self.assertRaisesRegex(ValueError, "закрыт"):
-                    Warehouse(self.config).cancel_plan(plan.transaction_id, Decimal("1"), "Late")
+                    Warehouse(lambda: UnitOfWork(self.config)).cancel_plan(plan.transaction_id, Decimal("1"), "Late")
 
     def test_nonplan_and_incomplete_plan_cannot_be_cancelled(self):
         with UnitOfWork(self.config) as uow:
@@ -310,7 +310,7 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
         for transaction_id in (999999, actual.id, incomplete.id):
             with self.subTest(transaction_id=transaction_id):
                 with self.assertRaises(ValueError):
-                    Warehouse(self.config).cancel_plan(transaction_id, Decimal("1"), "Invalid")
+                    Warehouse(lambda: UnitOfWork(self.config)).cancel_plan(transaction_id, Decimal("1"), "Invalid")
         self.assertEqual(self.count_rows("plan_cancellations"), 0)
 
     def test_find_open_filters_and_limits(self):
@@ -336,7 +336,7 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
             self.assertEqual(plans.find_open_consumptions(self.material_id, self.other_customer_id), [])
 
     def test_facade_keeps_journal_id_and_requires_order_date(self):
-        warehouse = Warehouse(self.config)
+        warehouse = Warehouse(lambda: UnitOfWork(self.config))
         with self.assertRaises(TypeError):
             warehouse.create_planned_receipt(
                 self.material_id, self.supplier_id, self.planned_date, Decimal("100"),
@@ -373,7 +373,7 @@ class PlanRepositoryPostgresTest(unittest.TestCase):
         plan = self.create_plan(quantity=Decimal("99999999.99"))
         with localcontext() as context:
             context.prec = 2
-            warehouse = Warehouse(self.config)
+            warehouse = Warehouse(lambda: UnitOfWork(self.config))
             warehouse.cancel_plan(plan.transaction_id, Decimal("0.01"), "First")
             warehouse.cancel_plan(plan.transaction_id, Decimal("0.02"), "Second")
             result = warehouse.get_planned_receipt(plan.id)

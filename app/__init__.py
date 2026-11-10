@@ -1,12 +1,12 @@
 from flask import Flask
 
 from config import warehouse_config
-from semantic_entry.modules.warehouse.reports import WarehouseReports
 
+from .bootstrap import build_reports
 from .formatting import format_value, sort_value
 
 app = Flask(__name__)
-reports = WarehouseReports(warehouse_config)
+reports = build_reports(warehouse_config)
 app.jinja_env.filters["report_value"] = format_value
 app.jinja_env.filters["sort_value"] = sort_value
 

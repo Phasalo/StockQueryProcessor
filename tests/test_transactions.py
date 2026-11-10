@@ -12,9 +12,10 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
-from config import WarehouseConfig
+from semantic_entry.adapters.postgres.config import PostgresConfig
+from semantic_entry.adapters.postgres.connection import create_connection
+from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.enums import TransactionType
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
 from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     FilmTypeRepository,
     MaterialRepository,
@@ -23,7 +24,6 @@ from semantic_entry.modules.warehouse.postgres.repositories.transactions import 
     TransactionRecord,
     TransactionRepository,
 )
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 
 class TransactionRepositoryPostgresTest(unittest.TestCase):
@@ -33,7 +33,7 @@ class TransactionRepositoryPostgresTest(unittest.TestCase):
         if not dsn:
             raise unittest.SkipTest("Set TEST_DATABASE_DSN to run PostgreSQL tests")
         settings = parse_dsn(dsn)
-        cls.admin_config = WarehouseConfig(
+        cls.admin_config = PostgresConfig(
             database=settings["dbname"], user=settings["user"],
             password=settings.get("password", ""), host=settings["host"],
             port=int(settings.get("port", 5432)),

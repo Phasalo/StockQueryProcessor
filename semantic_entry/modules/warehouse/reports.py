@@ -7,16 +7,17 @@ from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
 from semantic_entry.modules.warehouse.postgres.repositories.reports import (
     ReportRepository,
 )
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 if TYPE_CHECKING:
-    from config import WarehouseConfig
+    from collections.abc import Callable
+
+    from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
     from semantic_entry.modules.warehouse.models import StockBalance
 
 
 class WarehouseReports:
-    def __init__(self, config: WarehouseConfig):
-        self._config = config
+    def __init__(self, uow_factory: Callable[[], UnitOfWork]):
+        self._uow_factory = uow_factory
 
     @staticmethod
     def _type_code(film_type: FilmType | str) -> str:
@@ -43,7 +44,7 @@ class WarehouseReports:
         return rows[0] if rows else None
 
     def get_film_type_summary(self, film_type: FilmType | str) -> list[dict]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             rows = ReportRepository(uow.connection).list_stock(self._type_code(film_type))
         return [self._stock_result(row) for row in rows]
 
@@ -51,7 +52,7 @@ class WarehouseReports:
         self, film_type: FilmType | str, film_format: int, thickness: int,
         *, brand: str | None = None,
     ) -> dict:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             row = self._find_stock(ReportRepository(uow.connection), film_type, film_format, thickness, brand)
         if row is not None:
             return self._stock_result(row)
@@ -64,7 +65,7 @@ class WarehouseReports:
         self, film_type: FilmType | str, film_format: int, thickness: int,
         *, brand: str | None = None,
     ) -> list[dict]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             repository = ReportRepository(uow.connection)
             material = self._find_stock(repository, film_type, film_format, thickness, brand)
             rows = repository.list_open_consumption(material.material_id) if material else []
@@ -78,7 +79,7 @@ class WarehouseReports:
         self, film_type: FilmType | str, film_format: int, thickness: int,
         *, brand: str | None = None,
     ) -> list[dict]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             repository = ReportRepository(uow.connection)
             material = self._find_stock(repository, film_type, film_format, thickness, brand)
             rows = repository.list_open_receipts(material.material_id) if material else []
@@ -89,7 +90,7 @@ class WarehouseReports:
         } for row in rows]
 
     def get_all_transactions(self) -> list[dict]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             records = ReportRepository(uow.connection).list_transactions()
         return [
             {
@@ -114,13 +115,13 @@ class WarehouseReports:
         ]
 
     def get_available_formats(self, film_type: FilmType | str) -> list[int]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             return ReportRepository(uow.connection).list_formats(self._type_code(film_type))
 
     def get_available_thicknesses(self, film_type: FilmType | str) -> list[int]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             return ReportRepository(uow.connection).list_thicknesses(self._type_code(film_type))
 
     def get_available_brands(self, film_type: FilmType | str, film_format: int, thickness: int) -> list[str]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             return ReportRepository(uow.connection).list_brands(self._type_code(film_type), film_format, thickness)

@@ -1,8 +1,8 @@
-from dataclasses import asdict
-from datetime import date
-from decimal import Decimal
+from __future__ import annotations
 
-from config import WarehouseConfig
+from dataclasses import asdict
+from typing import TYPE_CHECKING
+
 from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
 from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRepository,
@@ -24,18 +24,24 @@ from semantic_entry.modules.warehouse.postgres.repositories.transactions import 
     TransactionRepository,
     validate_quantity,
 )
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from datetime import date
+    from decimal import Decimal
+
+    from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 
 
 class Warehouse:
-    def __init__(self, config: WarehouseConfig):
-        self._config = config
+    def __init__(self, uow_factory: Callable[[], UnitOfWork]):
+        self._uow_factory = uow_factory
 
     def add_film(
         self, film_type: FilmType | str, brand: str, film_format: int, thickness: int,
     ) -> int:
         code = film_type.name if isinstance(film_type, FilmType) else film_type
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             record = FilmTypeRepository(uow.connection).find_by_code(code)
             if record is None:
                 raise ValueError(f"Неизвестный тип плёнки: {code}.")
@@ -48,7 +54,7 @@ class Warehouse:
         self, film_type: FilmType | str, brand: str, film_format: int, thickness: int,
     ) -> int | None:
         code = film_type.name if isinstance(film_type, FilmType) else film_type
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             record = FilmTypeRepository(uow.connection).find_by_code(code)
             if record is None:
                 return None
@@ -65,7 +71,7 @@ class Warehouse:
         thickness: int | None = None,
         limit: int = 10,
     ) -> list[dict]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             film_type_id = None
             if film_type is not None:
                 code = film_type.name if isinstance(film_type, FilmType) else film_type
@@ -79,7 +85,7 @@ class Warehouse:
         return [self._film_result(material) for material in materials]
 
     def get_film(self, film_id: int) -> dict | None:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             material = MaterialRepository(uow.connection).get(film_id)
         return self._film_result(material) if material else None
 
@@ -94,54 +100,54 @@ class Warehouse:
         }
 
     def add_customer(self, name: str, prod_card_number: str) -> int:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             customer_id = CustomerRepository(uow.connection).add(name, prod_card_number)
         return customer_id
 
     def find_customer(self, name: str, prod_card_number: str) -> int | None:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             customer = CustomerRepository(uow.connection).find(name, prod_card_number)
         return customer.id if customer else None
 
     def search_customers(self, query: str, limit: int = 10) -> list[dict]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             customers = CustomerRepository(uow.connection).search(query, limit)
         return [asdict(customer) for customer in customers]
 
     def get_customer(self, customer_id: int) -> dict | None:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             customer = CustomerRepository(uow.connection).get(customer_id)
         return asdict(customer) if customer else None
 
     def add_supplier(self, name: str) -> int:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             supplier_id = SupplierRepository(uow.connection).add(name)
         return supplier_id
 
     def find_supplier(self, name: str) -> int | None:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             supplier = SupplierRepository(uow.connection).find(name)
         return supplier.id if supplier else None
 
     def search_suppliers(self, query: str, limit: int = 10) -> list[dict]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             suppliers = SupplierRepository(uow.connection).search(query, limit)
         return [asdict(supplier) for supplier in suppliers]
 
     def get_supplier(self, supplier_id: int) -> dict | None:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             supplier = SupplierRepository(uow.connection).get(supplier_id)
         return asdict(supplier) if supplier else None
 
     def create_consumption(self, film_id: int, customer_id: int, delta_kg: Decimal) -> int:
         """Возвращает ID журнала; ID плана доступен через PlanRepository."""
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             plan = PlanRepository(uow.connection).add_consumption(film_id, customer_id, delta_kg)
         return plan.transaction_id
 
     def create_adjustment(self, film_id: int, delta_kg: Decimal) -> int:
         validate_quantity(delta_kg)
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             lock_material(uow.connection, film_id)
             transaction = TransactionRepository(uow.connection).add(
                 TransactionType.ADJUSTMENT, film_id, delta_kg,
@@ -153,7 +159,7 @@ class Warehouse:
         *, order_date: date,
     ) -> int:
         """Возвращает ID журнала; ID плана доступен через PlanRepository."""
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             plan = PlanRepository(uow.connection).add_receipt(
                 film_id, supplier_id, order_date, planned_date, delta_kg,
             )
@@ -162,19 +168,19 @@ class Warehouse:
     def find_open_planned_receipts(
         self, film_id: int | None = None, supplier_id: int | None = None, limit: int = 10,
     ) -> list[dict]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             plans = PlanRepository(uow.connection).find_open_receipts(film_id, supplier_id, limit)
         return [self._planned_receipt_result(plan) for plan in plans]
 
     def get_planned_receipt(self, planned_receipt_id: int) -> dict | None:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             plan = PlanRepository(uow.connection).get_receipt(planned_receipt_id)
         return self._planned_receipt_result(plan) if plan else None
 
     def cancel_plan(
         self, plan_transaction_id: int, quantity_kg: Decimal, reason: str,
     ) -> PlanCancellationRecord:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             cancellation = PlanRepository(uow.connection).cancel(
                 plan_transaction_id, quantity_kg, reason,
             )
@@ -199,7 +205,7 @@ class Warehouse:
         self, film_id: int, planned_receipt_id: int | None,
         actual_date: date, delta_kg: Decimal, *, supplier_id: int | None = None,
     ) -> int:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             if supplier_id is None:
                 if planned_receipt_id is None:
                     raise ValueError("Для прихода без плана требуется supplier_id.")
@@ -217,7 +223,7 @@ class Warehouse:
         self, film_id: int, customer_id: int, actual_date: date | None,
         delta_kg: Decimal, *, planned_consumption_id: int | None = None,
     ) -> int:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             movement = MovementRepository(uow.connection).add_issue(
                 film_id, customer_id, actual_date, delta_kg,
                 planned_consumption_id=planned_consumption_id,

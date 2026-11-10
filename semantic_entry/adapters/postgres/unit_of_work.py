@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
+from semantic_entry.adapters.postgres.connection import create_connection
 
 if TYPE_CHECKING:
     from types import TracebackType
 
     from psycopg2.extensions import connection
 
-    from config import WarehouseConfig
+    from semantic_entry.adapters.postgres.config import PostgresConfig
 
 
 class UnitOfWork:
-    def __init__(self, config: WarehouseConfig):
+    def __init__(self, config: PostgresConfig):
         self._config = config
         self._connection: connection | None = None
 

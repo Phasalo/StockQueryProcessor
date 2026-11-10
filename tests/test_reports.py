@@ -16,14 +16,15 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
 from app import app
-from config import WarehouseConfig
+from semantic_entry.adapters.postgres.config import PostgresConfig
+from semantic_entry.adapters.postgres.connection import create_connection
+from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 from semantic_entry.core.access import Actor
 from semantic_entry.core.commands.catalog import CommandCatalog
 from semantic_entry.core.commands.queries import QueryExecutor
 from semantic_entry.core.commands.registry import CommandRegistry
 from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
 from semantic_entry.modules.warehouse.models import StockBalance
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
 from semantic_entry.modules.warehouse.postgres.handlers.stock import StockQueryHandler
 from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRepository,
@@ -42,7 +43,6 @@ from semantic_entry.modules.warehouse.postgres.repositories.reports import (
 from semantic_entry.modules.warehouse.postgres.repositories.transactions import (
     TransactionRepository,
 )
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.queries.stock import (
     GET_STOCK_SPEC,
     GetStockResult,
@@ -57,7 +57,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
         if not dsn:
             raise unittest.SkipTest("Set TEST_DATABASE_DSN to run PostgreSQL tests")
         settings = parse_dsn(dsn)
-        cls.admin_config = WarehouseConfig(
+        cls.admin_config = PostgresConfig(
             database=settings["dbname"], user=settings["user"],
             password=settings.get("password", ""), host=settings["host"],
             port=int(settings.get("port", 5432)),
@@ -128,7 +128,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
         authorizer = Mock()
         authorizer.is_allowed.return_value = True
         executor = QueryExecutor(CommandCatalog(registry, authorizer))
-        executor.register(GET_STOCK_SPEC, StockQueryHandler(self.config))
+        executor.register(GET_STOCK_SPEC, StockQueryHandler(lambda: UnitOfWork(self.config)))
         return executor.query("warehouse.get_stock", 1, {"material_id": material_id}, Actor("reader"))
 
     def test_stock_query_returns_typed_balances_for_one_material(self):
@@ -187,7 +187,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
             for plan in (outgoing, incoming):
                 plans.cancel(plan.transaction_id, Decimal("10"), "Partial")
             plans.add_consumption(self.other_material_id, self.customer_id, Decimal("-200"))
-        reports = WarehouseReports(self.config)
+        reports = WarehouseReports(lambda: UnitOfWork(self.config))
         rows = reports.get_film_type_summary(FilmType.BOPP)
         self.assertEqual([row["brand"] for row in rows], ["Brand", "Other"])
         self.assertEqual([row["free_balance_kg"] for row in rows], [Decimal("60"), Decimal("-193")])
@@ -224,7 +224,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
                 plans.add_consumption(self.material_id, self.customer_id, Decimal("-1"))
                 plans.add_receipt(self.material_id, self.supplier_id, self.order_date, self.planned_date, Decimal("1"))
             plans.add_consumption(self.other_material_id, self.customer_id, Decimal("-500"))
-        reports = WarehouseReports(self.config)
+        reports = WarehouseReports(lambda: UnitOfWork(self.config))
         outgoing_rows = reports.get_planned_consumption_details("BOPP", 1200, 25, brand="Brand")
         incoming_rows = reports.get_planned_receipt_details("BOPP", 1200, 25, brand="Brand")
         self.assertEqual(len(outgoing_rows), 13)
@@ -242,7 +242,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
         self.assertEqual(sum(row["delta_kg"] for row in incoming_rows), summary["planned_receipt_kg"])
 
     def test_missing_material_combination_returns_empty_reports(self):
-        reports = WarehouseReports(self.config)
+        reports = WarehouseReports(lambda: UnitOfWork(self.config))
         self.assertTrue(all(value == Decimal("0") for value in reports.get_film_summary("BOPP", 999, 999).values()))
         self.assertEqual(reports.get_planned_consumption_details("BOPP", 999, 999), [])
         self.assertEqual(reports.get_planned_receipt_details("BOPP", 999, 999), [])
@@ -257,7 +257,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
             materials.add(film_type.id, "A&B / <tag>", 1400, 30)
             empty_brand = materials.add(film_type.id, "", 1500, 40)
             materials.add(film_type.id, "Named", 1500, 40)
-        reports = WarehouseReports(self.config)
+        reports = WarehouseReports(lambda: UnitOfWork(self.config))
         self.assertEqual(reports.get_available_formats(FilmType.BOPP), [1200, 1400, 1500])
         self.assertEqual(reports.get_available_thicknesses("BOPP"), [25, 30, 40])
         self.assertEqual(reports.get_available_brands("BOPP", 1200, 25), ["Brand", "Other"])
@@ -272,7 +272,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
             movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("100"))
             movements.add_receipt(self.other_material_id, self.supplier_id, self.actual_date, Decimal("7"))
             PlanRepository(uow.connection).add_consumption(self.material_id, self.customer_id, Decimal("-20"))
-        reports = WarehouseReports(self.config)
+        reports = WarehouseReports(lambda: UnitOfWork(self.config))
         with patch("app.views.reports", reports):
             client = app.test_client()
             summary = client.get("/film-type/BOPP")
@@ -442,7 +442,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
 
     def test_empty_journal_does_not_include_materials_without_transactions(self):
         self.assertEqual(self.journal(), [])
-        self.assertEqual(WarehouseReports(self.config).get_all_transactions(), [])
+        self.assertEqual(WarehouseReports(lambda: UnitOfWork(self.config)).get_all_transactions(), [])
 
     def test_all_types_keep_original_quantities_and_do_not_multiply_cancellations(self):
         with UnitOfWork(self.config) as uow:
@@ -535,7 +535,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
             movements = MovementRepository(uow.connection)
             first = movements.add_receipt(self.material_id, self.supplier_id, self.actual_date, Decimal("10"))
             second = movements.add_receipt(self.other_material_id, self.supplier_id, self.actual_date, Decimal("20"))
-        rows = WarehouseReports(self.config).get_all_transactions()
+        rows = WarehouseReports(lambda: UnitOfWork(self.config)).get_all_transactions()
         self.assertEqual([row["id"] for row in rows], [second.transaction_id, first.transaction_id])
         self.assertEqual([row["film_brand"] for row in rows], ["Other", "Brand"])
         for row, material_id, quantity in zip(rows, (self.other_material_id, self.material_id), (Decimal("20"), Decimal("10")), strict=True):
@@ -553,7 +553,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
             self.assertEqual(row["actual_date"], self.actual_date)
 
     def test_report_uses_callers_transaction_without_committing(self):
-        reports = WarehouseReports(self.config)
+        reports = WarehouseReports(lambda: UnitOfWork(self.config))
         with UnitOfWork(self.config) as uow:
             transaction = TransactionRepository(uow.connection).add("ADJUSTMENT", self.material_id, Decimal("1"))
             self.assertEqual([row.transaction_id for row in ReportRepository(uow.connection).list_transactions()], [transaction.id])
@@ -579,7 +579,7 @@ class ReportRepositoryPostgresTest(unittest.TestCase):
             film_type_id = FilmTypeRepository(uow.connection).add("CUSTOM", "Особая плёнка")
             material_id = MaterialRepository(uow.connection).add(film_type_id, "Новая марка", 1200, 25)
             MovementRepository(uow.connection).add_issue(material_id, self.customer_id, self.actual_date, Decimal("-2"))
-        reports = WarehouseReports(self.config)
+        reports = WarehouseReports(lambda: UnitOfWork(self.config))
         row, = reports.get_all_transactions()
         self.assertEqual(row["film_type"], "CUSTOM")
         self.assertEqual(row["film_type_name"], "Особая плёнка")

@@ -11,9 +11,10 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 
-from config import WarehouseConfig
+from semantic_entry.adapters.postgres.config import PostgresConfig
+from semantic_entry.adapters.postgres.connection import create_connection
+from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.enums import FilmType
-from semantic_entry.modules.warehouse.postgres.connection import create_connection
 from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     CustomerRecord,
     CustomerRepository,
@@ -24,7 +25,6 @@ from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     SupplierRecord,
     SupplierRepository,
 )
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.service import Warehouse
 
 
@@ -35,7 +35,7 @@ class CatalogPostgresTest(unittest.TestCase):
         if not dsn:
             raise unittest.SkipTest("Set TEST_DATABASE_DSN to run PostgreSQL tests")
         settings = parse_dsn(dsn)
-        cls.admin_config = WarehouseConfig(
+        cls.admin_config = PostgresConfig(
             database=settings["dbname"], user=settings["user"],
             password=settings.get("password", ""), host=settings["host"],
             port=int(settings.get("port", 5432)),
@@ -82,7 +82,7 @@ class CatalogPostgresTest(unittest.TestCase):
             types = FilmTypeRepository(uow.connection)
             self.bopp = types.add("BOPP", "Прозрачный BOPP")
             self.cpp = types.add("CPP", "Каст-полипропилен")
-        self.warehouse = Warehouse(self.config)
+        self.warehouse = Warehouse(lambda: UnitOfWork(self.config))
 
     def test_custom_type_and_material_share_one_transaction(self):
         with UnitOfWork(self.config) as uow:

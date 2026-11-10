@@ -9,12 +9,13 @@ from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     SupplierRepository,
 )
 from semantic_entry.modules.warehouse.postgres.repositories.plans import PlanRepository
-from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from psycopg2.extensions import connection
 
-    from config import WarehouseConfig
+    from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
     from semantic_entry.core.access import Actor
     from semantic_entry.modules.warehouse.commands.receipts import RecordReceiptInput
 
@@ -57,10 +58,10 @@ class ReceiptPreviewer:
 
 
 class ReceiptPreviewHandler:
-    def __init__(self, config: WarehouseConfig):
-        self._config = config
+    def __init__(self, uow_factory: Callable[[], UnitOfWork]):
+        self._uow_factory = uow_factory
 
     def __call__(self, parameters: RecordReceiptInput, actor: Actor) -> PreviewResult[ReceiptPreview]:
-        with UnitOfWork(self._config) as uow:
+        with self._uow_factory() as uow:
             uow.connection.set_session(isolation_level="REPEATABLE READ", readonly=True)
             return ReceiptPreviewer(uow.connection).preview(parameters)
