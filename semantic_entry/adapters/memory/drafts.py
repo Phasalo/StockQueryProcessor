@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from heapq import heappop, heappush
 from threading import Lock, RLock
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -28,12 +29,14 @@ if TYPE_CHECKING:
 class _DraftEntry:
     draft: CommandDraft
     lock: RLock = field(default_factory=RLock)
+    users: int = 0
 
 
 class MemoryDraftStore:
     def __init__(self, clock: Callable[[], datetime] | None = None):
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._drafts: dict[UUID, _DraftEntry] = {}
+        self._expirations: list[tuple[datetime, UUID]] = []
         self._lock = Lock()
 
     def create(
@@ -50,26 +53,30 @@ class MemoryDraftStore:
             created_at=now, expires_at=now + lifetime,
         )
         with self._lock:
+            self._purge_expired(now)
             self._drafts[draft.draft_id] = _DraftEntry(deepcopy(draft))
+            heappush(self._expirations, (draft.expires_at, draft.draft_id))
         return deepcopy(draft)
 
+    def purge_expired(self) -> int:
+        now = self._now()
+        with self._lock:
+            return self._purge_expired(now)
+
     def get(self, draft_id: UUID, actor: Actor) -> CommandDraft:
-        entry = self._entry(draft_id)
-        with entry.lock:
+        with self._entry(draft_id) as entry:
             return deepcopy(self._get_owned(entry, actor))
 
     @contextmanager
     def lock_current(self, draft_id: UUID, actor: Actor) -> Generator[CommandDraft, None, None]:
-        entry = self._entry(draft_id)
-        with entry.lock:
+        with self._entry(draft_id) as entry:
             yield deepcopy(self._get_owned(entry, actor))
 
     @contextmanager
     def lock_confirmation(
         self, draft_id: UUID, expected_version: int, actor: Actor,
     ) -> Generator[CommandDraft, None, None]:
-        entry = self._entry(draft_id)
-        with entry.lock:
+        with self._entry(draft_id) as entry:
             current = self._get_owned(entry, actor, allow_expired=entry.draft.state == DraftState.EXECUTED)
             current.require_version(expected_version)
             if current.state != DraftState.EXECUTED:
@@ -77,8 +84,7 @@ class MemoryDraftStore:
             yield deepcopy(current)
 
     def mark_executed(self, draft_id: UUID, expected_version: int, actor: Actor) -> CommandDraft:
-        entry = self._entry(draft_id)
-        with entry.lock:
+        with self._entry(draft_id) as entry:
             current = self._get_owned(entry, actor, allow_expired=True)
             current.require_version(expected_version)
             if current.state != DraftState.EXECUTED:
@@ -90,8 +96,7 @@ class MemoryDraftStore:
         self, draft_id: UUID, expected_version: int, actor: Actor,
         *, payload: Mapping[str, object], preparation: PreparationResult,
     ) -> CommandDraft:
-        entry = self._entry(draft_id)
-        with entry.lock:
+        with self._entry(draft_id) as entry:
             current = self._get_owned(entry, actor)
             current.require_editable(expected_version)
             if (
@@ -108,20 +113,42 @@ class MemoryDraftStore:
             return deepcopy(updated)
 
     def cancel(self, draft_id: UUID, expected_version: int, actor: Actor) -> CommandDraft:
-        entry = self._entry(draft_id)
-        with entry.lock:
+        with self._entry(draft_id) as entry:
             current = self._get_owned(entry, actor)
             current.require_editable(expected_version)
             cancelled = replace(current, version=current.version + 1, state=DraftState.CANCELLED)
             entry.draft = cancelled
             return deepcopy(cancelled)
 
-    def _entry(self, draft_id: UUID) -> _DraftEntry:
+    @contextmanager
+    def _entry(self, draft_id: UUID) -> Generator[_DraftEntry, None, None]:
         with self._lock:
             try:
-                return self._drafts[draft_id]
+                entry = self._drafts[draft_id]
             except KeyError as error:
                 raise DraftNotFoundError(draft_id) from error
+            entry.users += 1
+        try:
+            with entry.lock:
+                yield entry
+        finally:
+            with self._lock:
+                entry.users -= 1
+
+    def _purge_expired(self, now: datetime) -> int:
+        deferred = []
+        removed = 0
+        while self._expirations and self._expirations[0][0] <= now:
+            expiration = heappop(self._expirations)
+            _, draft_id = expiration
+            if self._drafts[draft_id].users:
+                deferred.append(expiration)
+            else:
+                del self._drafts[draft_id]
+                removed += 1
+        for expiration in deferred:
+            heappush(self._expirations, expiration)
+        return removed
 
     def _get_owned(self, entry: _DraftEntry, actor: Actor, *, allow_expired: bool = False) -> CommandDraft:
         draft = entry.draft

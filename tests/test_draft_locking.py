@@ -15,6 +15,7 @@ from semantic_entry.core.commands.models import (
 from semantic_entry.core.drafts.models import (
     DraftClosedError,
     DraftExpiredError,
+    DraftNotFoundError,
     DraftNotReadyError,
     DraftState,
     DraftVersionConflictError,
@@ -153,6 +154,29 @@ class DraftLockingTest(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=1) as executor:
             cancelled = executor.submit(self.store.cancel, original.draft_id, 1, self.actor).result(timeout=3)
         self.assertEqual(cancelled.state, DraftState.CANCELLED)
+
+    def test_cleanup_skips_active_confirmation_without_blocking_other_drafts(self):
+        active = self.create()
+        expired = self.create()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with self.store.lock_confirmation(active.draft_id, 1, self.actor):
+                self.clock.return_value = active.expires_at
+                self.assertEqual(executor.submit(self.store.purge_expired).result(timeout=3), 1)
+                executed = self.store.mark_executed(active.draft_id, 1, self.actor)
+                self.assertEqual(executed.state, DraftState.EXECUTED)
+                with self.assertRaises(DraftNotFoundError):
+                    self.store.get(expired.draft_id, self.actor)
+        self.assertEqual(self.store.purge_expired(), 1)
+        self.assertEqual(self.store.purge_expired(), 0)
+
+    def test_failed_context_does_not_prevent_later_cleanup(self):
+        draft = self.create()
+        with self.assertRaisesRegex(RuntimeError, "Stop confirmation"):
+            with self.store.lock_confirmation(draft.draft_id, 1, self.actor):
+                self.clock.return_value = draft.expires_at
+                self.assertEqual(self.store.purge_expired(), 0)
+                raise RuntimeError("Stop confirmation")
+        self.assertEqual(self.store.purge_expired(), 1)
 
 
 if __name__ == "__main__":

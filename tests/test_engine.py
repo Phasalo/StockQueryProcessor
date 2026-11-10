@@ -193,6 +193,24 @@ class EnginePostgresTest(unittest.TestCase):
         self.confirm(revised)
         self.assertEqual(self.counts(), (1, 1, 1, 1))
 
+    def test_cleanup_during_confirmation_and_durable_replay_after_eviction(self):
+        draft = self.prepare()
+        original = RecordReceiptHandler.execute
+
+        def execute(handler, parameters, actor):
+            result = original(handler, parameters, actor)
+            self.clock.return_value = draft.expires_at
+            self.assertEqual(self.drafts.purge_expired(), 0)
+            return result
+
+        with patch.object(RecordReceiptHandler, "execute", execute):
+            result = self.confirm(draft)
+        self.assertEqual(self.drafts.purge_expired(), 1)
+        with self.assertRaises(DraftNotFoundError):
+            self.drafts.get(draft.draft_id, self.actor)
+        self.assertEqual(self.confirm(draft), result)
+        self.assertEqual(self.counts(), (1, 1, 1, 1))
+
     def test_cancelled_expired_and_stale_drafts_are_not_executed(self):
         cancelled = self.prepare()
         self.engine.cancel(cancelled.draft_id, 1, self.actor)

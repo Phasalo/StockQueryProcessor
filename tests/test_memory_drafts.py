@@ -11,7 +11,11 @@ from semantic_entry.core.commands.models import (
     FieldError,
     PreparationResult,
 )
-from semantic_entry.core.drafts.models import DraftExpiredError, DraftState
+from semantic_entry.core.drafts.models import (
+    DraftExpiredError,
+    DraftNotFoundError,
+    DraftState,
+)
 
 
 class NoteInput(CommandModel):
@@ -100,6 +104,47 @@ class MemoryDraftStoreTest(unittest.TestCase):
         self.clock.return_value = draft.expires_at
         with self.assertRaises(DraftExpiredError):
             self.store.get(draft.draft_id, self.actor)
+
+    def test_cleanup_removes_expired_drafts_and_preserves_live_ones(self):
+        expired = self.create()
+        self.clock.return_value = self.now + timedelta(minutes=1)
+        live = self.create()
+        self.clock.return_value = expired.expires_at - timedelta(microseconds=1)
+        self.assertEqual(self.store.purge_expired(), 0)
+        self.clock.return_value = expired.expires_at
+        self.assertEqual(self.store.purge_expired(), 1)
+        with self.assertRaises(DraftNotFoundError):
+            self.store.get(expired.draft_id, self.actor)
+        self.assertEqual(self.store.get(live.draft_id, self.actor), live)
+        self.assertEqual(self.store.purge_expired(), 0)
+
+    def test_creation_automatically_reclaims_expired_drafts(self):
+        expired = self.create()
+        self.clock.return_value = expired.expires_at
+        live = self.create()
+        with self.assertRaises(DraftNotFoundError):
+            self.store.get(expired.draft_id, self.actor)
+        self.assertEqual(self.store.get(live.draft_id, self.actor), live)
+
+    def test_cleanup_orders_by_expiration_instead_of_creation(self):
+        long_lived = self.create()
+        short_lived = self.store.create(self.payload, self.preparation, lifetime=timedelta(minutes=1))
+        self.clock.return_value = short_lived.expires_at
+        self.assertEqual(self.store.purge_expired(), 1)
+        self.assertEqual(self.store.get(long_lived.draft_id, self.actor), long_lived)
+        with self.assertRaises(DraftNotFoundError):
+            self.store.get(short_lived.draft_id, self.actor)
+
+    def test_cleanup_reclaims_cancelled_and_executed_drafts(self):
+        cancelled = self.create()
+        executed = self.create()
+        self.store.cancel(cancelled.draft_id, 1, self.actor)
+        self.store.mark_executed(executed.draft_id, 1, self.actor)
+        self.clock.return_value = cancelled.expires_at
+        self.assertEqual(self.store.purge_expired(), 2)
+        for draft in (cancelled, executed):
+            with self.subTest(draft=draft.draft_id), self.assertRaises(DraftNotFoundError):
+                self.store.get(draft.draft_id, self.actor)
 
     def test_unknown_and_other_store_drafts_are_not_found(self):
         draft = self.create()
