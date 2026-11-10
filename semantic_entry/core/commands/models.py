@@ -11,19 +11,6 @@ class CommandEffect(StrEnum):
     WRITE = "WRITE"
 
 
-@dataclass(frozen=True)
-class Actor:
-    actor_id: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.actor_id, str) or not self.actor_id.strip():
-            raise ValueError("actor_id должен быть непустой строкой.")
-
-
-class PermissionDeniedError(PermissionError):
-    pass
-
-
 class CommandModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -70,6 +57,11 @@ class CommandSpec(Generic[InputT, ResultT]):
 
     def validate_result(self, payload: Mapping[str, Any]) -> ResultT:
         return self.result_model.model_validate(dict(payload))
+
+    def validate_handler_result(self, result: object) -> ResultT:
+        if not isinstance(result, self.result_model):
+            raise TypeError("Обработчик должен вернуть модель результата своей команды.")
+        return self.validate_result(result.model_dump(round_trip=True))
 
     def input_json_schema(self) -> dict[str, Any]:
         return self.input_model.model_json_schema()

@@ -6,12 +6,12 @@ from semantic_entry.modules.warehouse.postgres.repositories.reports import (
     ReportRepository,
 )
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
-from semantic_entry.modules.warehouse.queries import GetStockResult
+from semantic_entry.modules.warehouse.queries.stock import GetStockResult
 
 if TYPE_CHECKING:
     from config import WarehouseConfig
-    from semantic_entry.core import Actor
-    from semantic_entry.modules.warehouse.queries import GetStockInput
+    from semantic_entry.core.access import Actor
+    from semantic_entry.modules.warehouse.queries.stock import GetStockInput
 
 
 class StockQueryHandler:

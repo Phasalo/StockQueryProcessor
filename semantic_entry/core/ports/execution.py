@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
-from semantic_entry.core.contracts import CommandModel
+from semantic_entry.core.commands.models import CommandModel
 
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from semantic_entry.core.contracts import Actor, PreviewResult
-    from semantic_entry.core.executions import ExecutionRecord
+    from semantic_entry.core.access import Actor
+    from semantic_entry.core.commands.models import PreviewResult
+    from semantic_entry.core.executions.models import ExecutionRecord
 
 
 InputT = TypeVar("InputT", bound=CommandModel, contravariant=True)

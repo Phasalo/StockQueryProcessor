@@ -18,10 +18,13 @@ from psycopg2.extensions import parse_dsn
 from pydantic import ValidationError
 
 from config import WarehouseConfig
-from semantic_entry.core import Actor, CommandCatalog, CommandPreparer, CommandRegistry
-from semantic_entry.core.draft_manager import DraftManager
-from semantic_entry.core.drafts import DraftState
-from semantic_entry.core.memory_drafts import MemoryDraftStore
+from semantic_entry.adapters.memory.drafts import MemoryDraftStore
+from semantic_entry.core.access import Actor
+from semantic_entry.core.commands.catalog import CommandCatalog
+from semantic_entry.core.commands.preparation import CommandPreparer
+from semantic_entry.core.commands.registry import CommandRegistry
+from semantic_entry.core.drafts.manager import DraftManager
+from semantic_entry.core.drafts.models import DraftState
 from semantic_entry.modules.warehouse.commands.receipts import (
     RECORD_RECEIPT_SPEC,
     ReceiptPreview,

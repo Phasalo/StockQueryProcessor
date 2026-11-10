@@ -17,7 +17,10 @@ from psycopg2.extensions import parse_dsn
 
 from app import app
 from config import WarehouseConfig
-from semantic_entry.core import Actor, CommandCatalog, CommandRegistry, QueryExecutor
+from semantic_entry.core.access import Actor
+from semantic_entry.core.commands.catalog import CommandCatalog
+from semantic_entry.core.commands.queries import QueryExecutor
+from semantic_entry.core.commands.registry import CommandRegistry
 from semantic_entry.modules.warehouse.enums import FilmType, TransactionType
 from semantic_entry.modules.warehouse.models import StockBalance
 from semantic_entry.modules.warehouse.postgres.connection import create_connection
@@ -40,7 +43,10 @@ from semantic_entry.modules.warehouse.postgres.repositories.transactions import 
     TransactionRepository,
 )
 from semantic_entry.modules.warehouse.postgres.unit_of_work import UnitOfWork
-from semantic_entry.modules.warehouse.queries import GET_STOCK_SPEC, GetStockResult
+from semantic_entry.modules.warehouse.queries.stock import (
+    GET_STOCK_SPEC,
+    GetStockResult,
+)
 from semantic_entry.modules.warehouse.reports import WarehouseReports
 
 

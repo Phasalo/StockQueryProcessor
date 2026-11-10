@@ -1,6 +1,6 @@
 from typing import Any
 
-from semantic_entry.core.contracts import CommandSpec
+from semantic_entry.core.commands.models import CommandSpec
 
 
 class CommandRegistry:

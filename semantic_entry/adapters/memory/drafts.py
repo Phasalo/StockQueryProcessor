@@ -8,8 +8,8 @@ from threading import Lock, RLock
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from semantic_entry.core.contracts import PermissionDeniedError
-from semantic_entry.core.drafts import (
+from semantic_entry.core.access import PermissionDeniedError
+from semantic_entry.core.drafts.models import (
     CommandDraft,
     DraftExpiredError,
     DraftNotFoundError,
@@ -20,7 +20,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Mapping
     from uuid import UUID
 
-    from semantic_entry.core.contracts import Actor, PreparationResult
+    from semantic_entry.core.access import Actor
+    from semantic_entry.core.commands.models import PreparationResult
 
 
 @dataclass

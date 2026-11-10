@@ -4,16 +4,11 @@ from unittest.mock import Mock
 
 from pydantic import StrictInt, ValidationError
 
-from semantic_entry.core import (
-    Actor,
-    CommandCatalog,
-    CommandEffect,
-    CommandModel,
-    CommandRegistry,
-    CommandSpec,
-    PermissionDeniedError,
-    QueryExecutor,
-)
+from semantic_entry.core.access import Actor, PermissionDeniedError
+from semantic_entry.core.commands.catalog import CommandCatalog
+from semantic_entry.core.commands.models import CommandEffect, CommandModel, CommandSpec
+from semantic_entry.core.commands.queries import QueryExecutor
+from semantic_entry.core.commands.registry import CommandRegistry
 
 
 class AddInput(CommandModel):

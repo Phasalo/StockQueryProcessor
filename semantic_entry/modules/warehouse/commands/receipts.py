@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from pydantic import Field, StrictInt
 
-from semantic_entry.core import CommandEffect, CommandModel, CommandSpec
+from semantic_entry.core.commands.models import CommandEffect, CommandModel, CommandSpec
 
 
 class RecordReceiptInput(CommandModel):

@@ -6,14 +6,11 @@ from unittest.mock import Mock, patch
 from pydantic import ValidationError
 
 from config import WarehouseConfig
-from semantic_entry.core import (
-    Actor,
-    CommandCatalog,
-    CommandPreparer,
-    CommandRegistry,
-    PermissionDeniedError,
-    QueryExecutor,
-)
+from semantic_entry.core.access import Actor, PermissionDeniedError
+from semantic_entry.core.commands.catalog import CommandCatalog
+from semantic_entry.core.commands.preparation import CommandPreparer
+from semantic_entry.core.commands.queries import QueryExecutor
+from semantic_entry.core.commands.registry import CommandRegistry
 from semantic_entry.modules.warehouse.commands.receipts import (
     RECORD_RECEIPT_SPEC,
     ReceiptPreview,

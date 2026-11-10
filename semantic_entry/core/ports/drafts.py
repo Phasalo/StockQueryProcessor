@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from contextlib import AbstractContextManager
+    from datetime import timedelta
+    from uuid import UUID
+
+    from semantic_entry.core.access import Actor
+    from semantic_entry.core.commands.models import PreparationResult
+    from semantic_entry.core.drafts.models import CommandDraft
+
+
+class DraftStore(Protocol):
+    def create(self, payload: Mapping[str, object], preparation: PreparationResult, *, lifetime: timedelta) -> CommandDraft: ...
+    def get(self, draft_id: UUID, actor: Actor) -> CommandDraft: ...
+    def lock_current(self, draft_id: UUID, actor: Actor) -> AbstractContextManager[CommandDraft]: ...
+    def lock_confirmation(self, draft_id: UUID, expected_version: int, actor: Actor) -> AbstractContextManager[CommandDraft]: ...
+    def update(self, draft_id: UUID, expected_version: int, actor: Actor, *, payload: Mapping[str, object], preparation: PreparationResult) -> CommandDraft: ...
+    def cancel(self, draft_id: UUID, expected_version: int, actor: Actor) -> CommandDraft: ...
+    def mark_executed(self, draft_id: UUID, expected_version: int, actor: Actor) -> CommandDraft: ...

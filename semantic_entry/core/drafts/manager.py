@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from semantic_entry.core.contracts import Actor
-    from semantic_entry.core.drafts import CommandDraft
-    from semantic_entry.core.memory_drafts import MemoryDraftStore
-    from semantic_entry.core.preparation import CommandPreparer
+    from semantic_entry.core.access import Actor
+    from semantic_entry.core.commands.preparation import CommandPreparer
+    from semantic_entry.core.drafts.models import CommandDraft
+    from semantic_entry.core.ports.drafts import DraftStore
 
 
 class DraftManager:
-    def __init__(self, preparer: CommandPreparer, store: MemoryDraftStore):
+    def __init__(self, preparer: CommandPreparer, store: DraftStore):
         self._preparer = preparer
         self._store = store
 

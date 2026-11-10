@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from pydantic import Field, StrictInt
 
-from semantic_entry.core import CommandModel
+from semantic_entry.core.commands.models import CommandModel
 
 
 class StockBalance(CommandModel):

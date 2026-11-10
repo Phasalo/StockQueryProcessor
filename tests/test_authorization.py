@@ -2,15 +2,10 @@ import unittest
 from dataclasses import FrozenInstanceError, replace
 from unittest.mock import Mock
 
-from semantic_entry.core import (
-    Actor,
-    CommandCatalog,
-    CommandEffect,
-    CommandModel,
-    CommandRegistry,
-    CommandSpec,
-    PermissionDeniedError,
-)
+from semantic_entry.core.access import Actor, PermissionDeniedError
+from semantic_entry.core.commands.catalog import CommandCatalog
+from semantic_entry.core.commands.models import CommandEffect, CommandModel, CommandSpec
+from semantic_entry.core.commands.registry import CommandRegistry
 
 
 class EmptyData(CommandModel):

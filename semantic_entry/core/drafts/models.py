@@ -4,7 +4,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
-from semantic_entry.core.contracts import PreparationResult
+from semantic_entry.core.commands.models import PreparationResult
 
 
 class DraftState(StrEnum):

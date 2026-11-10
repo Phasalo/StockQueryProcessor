@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from semantic_entry.core.contracts import Actor
+from semantic_entry.core.access import Actor
 
 
 class Authorizer(Protocol):

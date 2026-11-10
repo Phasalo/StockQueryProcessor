@@ -4,16 +4,11 @@ from unittest.mock import Mock, patch
 
 from pydantic import Field, StrictInt
 
-from semantic_entry.core import (
-    Actor,
-    CommandCatalog,
-    CommandEffect,
-    CommandModel,
-    CommandPreparer,
-    CommandRegistry,
-    CommandSpec,
-    PermissionDeniedError,
-)
+from semantic_entry.core.access import Actor, PermissionDeniedError
+from semantic_entry.core.commands.catalog import CommandCatalog
+from semantic_entry.core.commands.models import CommandEffect, CommandModel, CommandSpec
+from semantic_entry.core.commands.preparation import CommandPreparer
+from semantic_entry.core.commands.registry import CommandRegistry
 
 
 class ItemInput(CommandModel):

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import ValidationError
 
-from semantic_entry.core.contracts import (
+from semantic_entry.core.commands.models import (
     CommandEffect,
     CommandModel,
     CommandSpec,
@@ -18,12 +18,19 @@ from semantic_entry.core.contracts import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from semantic_entry.core.catalog import CommandCatalog
-    from semantic_entry.core.contracts import Actor
+    from semantic_entry.core.access import Actor
+    from semantic_entry.core.commands.catalog import CommandCatalog
 
 
 InputT = TypeVar("InputT", bound=CommandModel)
 PreviewT = TypeVar("PreviewT", bound=CommandModel)
+
+
+@dataclass(frozen=True)
+class _PreviewBinding:
+    spec: CommandSpec[Any, Any]
+    preview_model: type[CommandModel]
+    handler: Callable[[Any, Actor], PreviewResult[Any]]
 
 
 def validate_preview(result: object, preview_model: type[PreviewT]) -> PreviewResult[PreviewT]:
@@ -42,10 +49,7 @@ def validate_preview(result: object, preview_model: type[PreviewT]) -> PreviewRe
 class CommandPreparer:
     def __init__(self, catalog: CommandCatalog):
         self._catalog = catalog
-        self._previewers: dict[
-            tuple[str, int],
-            tuple[CommandSpec[Any, Any], type[CommandModel], Callable[[Any, Actor], PreviewResult[Any]]],
-        ] = {}
+        self._previewers: dict[tuple[str, int], _PreviewBinding] = {}
 
     def register_preview(
         self, spec: CommandSpec[InputT, Any], preview_model: type[PreviewT],
@@ -64,14 +68,14 @@ class CommandPreparer:
         key = spec.name, spec.version
         if key in self._previewers:
             raise ValueError(f"Preview для {spec.key} уже зарегистрирован.")
-        self._previewers[key] = spec, preview_model, handler
+        self._previewers[key] = _PreviewBinding(spec, preview_model, handler)
 
     def prepare(
         self, name: str, version: int, payload: object, actor: Actor,
     ) -> PreparationResult:
         spec = self._catalog.get(name, version, actor)
         binding = self._previewers.get((spec.name, spec.version))
-        if binding is not None and binding[0] is not spec:
+        if binding is not None and binding.spec is not spec:
             raise ValueError("Preview зарегистрирован для другой спецификации команды.")
         if not isinstance(payload, Mapping) or any(not isinstance(key, str) for key in payload):
             return PreparationResult(
@@ -89,7 +93,6 @@ class CommandPreparer:
         result = PreparationResult(spec.name, spec.version, actor.actor_id, validated)
         if binding is None:
             return result
-        _, preview_model, handler = binding
-        preview = handler(validated, actor)
-        checked = validate_preview(preview, preview_model)
+        preview = binding.handler(validated, actor)
+        checked = validate_preview(preview, binding.preview_model)
         return replace(result, errors=checked.errors, preview=checked.preview)

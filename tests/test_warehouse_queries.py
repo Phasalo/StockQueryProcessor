@@ -6,16 +6,13 @@ from unittest.mock import Mock, patch
 from pydantic import ValidationError
 
 from config import WarehouseConfig
-from semantic_entry.core import (
-    Actor,
-    CommandCatalog,
-    CommandPreparer,
-    CommandRegistry,
-    PermissionDeniedError,
-    QueryExecutor,
-)
+from semantic_entry.core.access import Actor, PermissionDeniedError
+from semantic_entry.core.commands.catalog import CommandCatalog
+from semantic_entry.core.commands.preparation import CommandPreparer
+from semantic_entry.core.commands.queries import QueryExecutor
+from semantic_entry.core.commands.registry import CommandRegistry
 from semantic_entry.modules.warehouse.postgres.handlers.stock import StockQueryHandler
-from semantic_entry.modules.warehouse.queries import GET_STOCK_SPEC, GetStockInput
+from semantic_entry.modules.warehouse.queries.stock import GET_STOCK_SPEC, GetStockInput
 
 
 class WarehouseStockQueryTest(unittest.TestCase):
@@ -72,7 +69,7 @@ def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
         raise AssertionError('Unexpected dependency: ' + name)
     return original_import(name, globals, locals, fromlist, level)
 builtins.__import__ = guarded_import
-from semantic_entry.modules.warehouse.queries import GET_STOCK_SPEC
+from semantic_entry.modules.warehouse.queries.stock import GET_STOCK_SPEC
 assert GET_STOCK_SPEC.validate_input({'material_id': 42}).material_id == 42
 '''
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=10)

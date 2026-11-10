@@ -22,8 +22,8 @@ from semantic_entry.modules.warehouse.postgres.repositories.plans import PlanRep
 if TYPE_CHECKING:
     from psycopg2.extensions import connection
 
-    from semantic_entry.core import Actor
-    from semantic_entry.core.contracts import PreviewResult
+    from semantic_entry.core.access import Actor
+    from semantic_entry.core.commands.models import PreviewResult
 
 
 class RecordReceiptHandler:

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from semantic_entry.core import FieldError
-from semantic_entry.core.contracts import PreviewResult
+from semantic_entry.core.commands.models import FieldError, PreviewResult
 from semantic_entry.modules.warehouse.commands.receipts import ReceiptPreview
 from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
     MaterialRepository,
@@ -16,7 +15,7 @@ if TYPE_CHECKING:
     from psycopg2.extensions import connection
 
     from config import WarehouseConfig
-    from semantic_entry.core import Actor
+    from semantic_entry.core.access import Actor
     from semantic_entry.modules.warehouse.commands.receipts import RecordReceiptInput
 
 

@@ -6,22 +6,21 @@ from threading import Barrier, Event
 from unittest.mock import Mock
 from uuid import uuid4
 
-from semantic_entry.core import (
-    Actor,
+from semantic_entry.adapters.memory.drafts import MemoryDraftStore
+from semantic_entry.core.access import Actor, PermissionDeniedError
+from semantic_entry.core.commands.models import (
     CommandModel,
     FieldError,
-    PermissionDeniedError,
     PreparationResult,
 )
-from semantic_entry.core.draft_manager import DraftManager
-from semantic_entry.core.drafts import (
+from semantic_entry.core.drafts.manager import DraftManager
+from semantic_entry.core.drafts.models import (
     CommandDraft,
     DraftClosedError,
     DraftExpiredError,
     DraftState,
     DraftVersionConflictError,
 )
-from semantic_entry.core.memory_drafts import MemoryDraftStore
 
 
 class NoteInput(CommandModel):

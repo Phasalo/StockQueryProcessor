@@ -1,8 +1,9 @@
 from typing import Any
 
-from semantic_entry.core.contracts import Actor, CommandSpec, PermissionDeniedError
-from semantic_entry.core.ports import Authorizer
-from semantic_entry.core.registry import CommandRegistry
+from semantic_entry.core.access import Actor, PermissionDeniedError
+from semantic_entry.core.commands.models import CommandSpec
+from semantic_entry.core.commands.registry import CommandRegistry
+from semantic_entry.core.ports.authorization import Authorizer
 
 
 class CommandCatalog:

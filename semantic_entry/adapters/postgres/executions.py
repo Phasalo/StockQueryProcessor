@@ -6,7 +6,7 @@ from uuid import UUID
 
 from psycopg2.extras import Json, RealDictCursor
 
-from semantic_entry.core.executions import ExecutionRecord
+from semantic_entry.core.executions.models import ExecutionRecord
 
 if TYPE_CHECKING:
     from psycopg2.extensions import connection

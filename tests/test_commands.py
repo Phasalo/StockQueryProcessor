@@ -5,12 +5,8 @@ from dataclasses import FrozenInstanceError, replace
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
-from semantic_entry.core import (
-    CommandEffect,
-    CommandModel,
-    CommandRegistry,
-    CommandSpec,
-)
+from semantic_entry.core.commands.models import CommandEffect, CommandModel, CommandSpec
+from semantic_entry.core.commands.registry import CommandRegistry
 
 
 class AddInput(CommandModel):
@@ -139,7 +135,8 @@ def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
         raise AssertionError('Unexpected dependency: ' + name)
     return original_import(name, globals, locals, fromlist, level)
 builtins.__import__ = guarded_import
-from semantic_entry.core import CommandEffect, CommandModel, CommandRegistry, CommandSpec
+from semantic_entry.core.commands.models import CommandEffect, CommandModel, CommandSpec
+from semantic_entry.core.commands.registry import CommandRegistry
 class Input(CommandModel):
     text: str
 class Result(CommandModel):

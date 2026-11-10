@@ -5,27 +5,26 @@ from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from unittest.mock import Mock
 
-from semantic_entry.core import (
-    Actor,
-    CommandCatalog,
+from semantic_entry.adapters.memory.drafts import MemoryDraftStore
+from semantic_entry.core.access import Actor, PermissionDeniedError
+from semantic_entry.core.commands.catalog import CommandCatalog
+from semantic_entry.core.commands.models import (
     CommandEffect,
     CommandModel,
-    CommandPreparer,
-    CommandRegistry,
     CommandSpec,
     FieldError,
-    PermissionDeniedError,
+    PreviewResult,
 )
-from semantic_entry.core.contracts import PreviewResult
-from semantic_entry.core.draft_manager import DraftManager
-from semantic_entry.core.drafts import (
+from semantic_entry.core.commands.preparation import CommandPreparer
+from semantic_entry.core.commands.registry import CommandRegistry
+from semantic_entry.core.drafts.manager import DraftManager
+from semantic_entry.core.drafts.models import (
     CommandDraft,
     DraftClosedError,
     DraftExpiredError,
     DraftState,
     DraftVersionConflictError,
 )
-from semantic_entry.core.memory_drafts import MemoryDraftStore
 
 
 class NoteInput(CommandModel):
