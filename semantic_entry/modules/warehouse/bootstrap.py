@@ -9,6 +9,9 @@ from semantic_entry.core.commands.queries import QueryExecutor
 from semantic_entry.core.commands.registry import CommandRegistry
 from semantic_entry.core.engine import Engine
 from semantic_entry.modules.warehouse.commands.receipt_intent import ReceiptIntent
+from semantic_entry.modules.warehouse.commands.receipt_normalization import (
+    ReceiptIntentNormalizer,
+)
 from semantic_entry.modules.warehouse.commands.receipts import (
     RECORD_RECEIPT_SPEC,
     ReceiptPreview,
@@ -65,4 +68,5 @@ def build_warehouse_engine(
     )
     engine.register_write(RECORD_RECEIPT_SPEC, ReceiptPreview, _receipt_handler)
     engine.register_extraction(RECORD_RECEIPT_SPEC, ReceiptIntent)
+    engine.register_normalizer(RECORD_RECEIPT_SPEC, ReceiptIntentNormalizer(ReceiptResolutionHandler(uow_factory)))
     return engine

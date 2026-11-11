@@ -25,7 +25,7 @@ from semantic_entry.core.commands.extraction import (
     ExtractionResult,
     ExtractionStatus,
 )
-from semantic_entry.core.drafts.models import DraftState
+from semantic_entry.core.drafts.models import DraftNotReadyError, DraftState
 from semantic_entry.modules.warehouse.bootstrap import build_warehouse_engine
 from semantic_entry.modules.warehouse.models import MaterialRecord, SupplierRecord
 from semantic_entry.modules.warehouse.postgres.repositories.catalog import (
@@ -170,6 +170,15 @@ class ReceiptResolutionPostgresTest(unittest.TestCase):
                 cursor.execute("SELECT (SELECT count(*) FROM materials), (SELECT count(*) FROM suppliers), (SELECT count(*) FROM transactions), (SELECT count(*) FROM receipts), (SELECT count(*) FROM engine.executions), (SELECT count(*) FROM engine.idempotency_records), (SELECT count(*) FROM engine.audit_events)")
                 return cursor.fetchone()
 
+    def prepare_text(self, parameters):
+        extractor = Mock()
+        extractor.extract.return_value = ExtractionResult(
+            status=ExtractionStatus.CANDIDATE,
+            candidate=CommandCandidate(command_name="warehouse.record_receipt", command_version=1, parameters=parameters),
+        )
+        self.engine = build_engine(self.config, self.authorizer, extractor=extractor)
+        return self.engine.prepare_from_text("Приход", self.actor, lifetime=timedelta(minutes=10))
+
     def test_exact_characteristics_and_supplier_name_resolve_to_ids(self):
         result = self.resolve({"material": self.material_lookup, "supplier_name": "Acme"})
         self.assertIsInstance(result, ResolveReceiptResult)
@@ -311,6 +320,73 @@ class ReceiptResolutionPostgresTest(unittest.TestCase):
         self.assertEqual(self.counts(), before)
         engine.confirm(draft.draft_id, draft.version, "from-text", self.actor)
         self.assertEqual(self.counts()[2:], (1, 1, 1, 1, 1))
+
+    def test_prepare_from_text_returns_ready_draft_without_writing(self):
+        before = self.counts()
+        prepared = self.prepare_text({
+            "material": self.material_lookup, "supplier_name": "Acme",
+            "quantity_kg": "12.50", "actual_date": "2026-11-10",
+        })
+        self.assertEqual(prepared.draft.state, DraftState.READY)
+        self.assertEqual(prepared.resolution.resolved_ids, {"material_id": self.material_id, "supplier_id": self.supplier_id})
+        self.assertEqual(prepared.draft.preparation.preview.parameters.material_id, self.material_id)
+        self.assertEqual(prepared.draft.preparation.preview.supplier_name, "Acme")
+        self.assertEqual(self.engine.get_draft(prepared.draft.draft_id, self.actor), prepared.draft)
+        self.assertEqual(self.counts(), before)
+        result = self.engine.confirm(prepared.draft.draft_id, prepared.draft.version, "prepared-text", self.actor)
+        self.assertEqual(self.engine.confirm(prepared.draft.draft_id, prepared.draft.version, "prepared-text", self.actor), result)
+        self.assertEqual(self.counts()[2:], (1, 1, 1, 1, 1))
+        stock = self.engine.query("warehouse.get_stock", 1, {"material_id": self.material_id}, self.actor).stock
+        self.assertEqual(stock.on_hand_kg, Decimal("12.50"))
+
+    def test_prepare_from_text_keeps_ambiguity_until_explicit_revision(self):
+        before = self.counts()
+        prepared = self.prepare_text({
+            "material": {"film_type_code": "BOPP", "format": 1200, "thickness": 25},
+            "supplier_name": "Partner", "quantity_kg": "1", "actual_date": "2026-11-10",
+        })
+        draft = prepared.draft
+        self.assertEqual(draft.state, DraftState.NEEDS_INPUT)
+        self.assertEqual(prepared.resolution.material.status, ResolutionStatus.AMBIGUOUS)
+        self.assertEqual(prepared.resolution.supplier.status, ResolutionStatus.AMBIGUOUS)
+        self.assertNotIn("material_id", draft.payload)
+        self.assertNotIn("supplier_id", draft.payload)
+        with self.assertRaises(DraftNotReadyError):
+            self.engine.confirm(draft.draft_id, draft.version, "ambiguous-text", self.actor)
+        self.assertEqual(self.counts(), before)
+        material = prepared.resolution.material.candidates[-1]
+        supplier = prepared.resolution.supplier.candidates[-1]
+        revised = self.engine.revise(draft.draft_id, draft.version, {"material_id": material.id, "supplier_id": supplier.id}, self.actor)
+        self.assertEqual(revised.state, DraftState.READY)
+        self.assertEqual(revised.version, 2)
+        self.assertEqual(revised.preparation.preview.brand, material.brand)
+        self.assertEqual(revised.preparation.preview.supplier_name, supplier.name)
+        self.assertEqual(self.counts(), before)
+        self.engine.confirm(draft.draft_id, revised.version, "chosen-text", self.actor)
+        self.assertEqual(self.counts()[2:], (1, 1, 1, 1, 1))
+
+    def test_prepare_from_text_reports_unknown_references_without_fallback(self):
+        before = self.counts()
+        prepared = self.prepare_text({
+            "material": {"film_type_code": "UNKNOWN"}, "supplier_name": "Missing",
+            "quantity_kg": "1", "actual_date": "2026-11-10",
+        })
+        self.assertEqual(prepared.draft.state, DraftState.NEEDS_INPUT)
+        self.assertEqual(prepared.resolution.material.status, ResolutionStatus.NOT_FOUND)
+        self.assertEqual(prepared.resolution.supplier.status, ResolutionStatus.NOT_FOUND)
+        self.assertEqual(prepared.draft.preparation.missing_fields, (("material_id",), ("supplier_id",)))
+        self.assertEqual(self.counts(), before)
+
+    def test_prepare_from_text_preserves_missing_amount_and_date(self):
+        before = self.counts()
+        prepared = self.prepare_text({"material": self.material_lookup, "supplier_name": "Acme"})
+        self.assertEqual(prepared.draft.state, DraftState.NEEDS_INPUT)
+        self.assertEqual(prepared.draft.payload, {"material_id": self.material_id, "supplier_id": self.supplier_id})
+        self.assertEqual(prepared.draft.preparation.missing_fields, (("actual_date",), ("quantity_kg",)))
+        revised = self.engine.revise(prepared.draft.draft_id, prepared.draft.version, {"actual_date": "2026-11-11", "quantity_kg": "5.25"}, self.actor)
+        self.assertEqual(revised.state, DraftState.READY)
+        self.assertEqual(revised.preparation.preview.parameters.quantity_kg, Decimal("5.25"))
+        self.assertEqual(self.counts(), before)
 
 
 if __name__ == "__main__":

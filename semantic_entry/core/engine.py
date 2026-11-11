@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from semantic_entry.core.commands.interpretation import CommandInterpreter
 from semantic_entry.core.commands.models import CommandModel
+from semantic_entry.core.commands.text import CommandTextPreparer
 from semantic_entry.core.drafts.manager import DraftManager
 from semantic_entry.core.executions.confirmation import CommandConfirmer
 
@@ -20,6 +21,10 @@ if TYPE_CHECKING:
     from semantic_entry.core.commands.models import CommandSpec
     from semantic_entry.core.commands.preparation import CommandPreparer
     from semantic_entry.core.commands.queries import QueryExecutor
+    from semantic_entry.core.commands.text import (
+        CandidateNormalization,
+        TextPreparationResult,
+    )
     from semantic_entry.core.drafts.models import CommandDraft
     from semantic_entry.core.ports.drafts import DraftStore
     from semantic_entry.core.ports.execution import CommandTransaction, WriteHandler
@@ -43,12 +48,22 @@ class Engine:
         self._manager = DraftManager(preparer, drafts)
         self._confirmer = CommandConfirmer(catalog, drafts, transaction_factory)
         self._interpreter = CommandInterpreter(catalog, extractor)
+        self._text_preparer = CommandTextPreparer(catalog, self._interpreter, self.prepare)
 
     def register_extraction(self, spec: CommandSpec[Any, Any], input_model: type[CommandModel]) -> None:
         self._interpreter.register(spec, input_model)
 
     def interpret(self, text: str, actor: Actor) -> ExtractionResult:
         return self._interpreter.interpret(text, actor)
+
+    def register_normalizer(
+        self, spec: CommandSpec[Any, Any],
+        normalize: Callable[[Mapping[str, object], Actor], CandidateNormalization],
+    ) -> None:
+        self._text_preparer.register(spec, normalize)
+
+    def prepare_from_text(self, text: str, actor: Actor, *, lifetime: timedelta) -> TextPreparationResult:
+        return self._text_preparer.prepare_from_text(text, actor, lifetime=lifetime)
 
     def register_write(
         self, spec: CommandSpec[InputT, ResultT], preview_model: type[PreviewT],
