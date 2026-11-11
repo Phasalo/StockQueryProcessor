@@ -8,6 +8,7 @@ from semantic_entry.core.commands.preparation import CommandPreparer
 from semantic_entry.core.commands.queries import QueryExecutor
 from semantic_entry.core.commands.registry import CommandRegistry
 from semantic_entry.core.engine import Engine
+from semantic_entry.modules.warehouse.commands.receipt_intent import ReceiptIntent
 from semantic_entry.modules.warehouse.commands.receipts import (
     RECORD_RECEIPT_SPEC,
     ReceiptPreview,
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from semantic_entry.core.ports.authorization import Authorizer
     from semantic_entry.core.ports.drafts import DraftStore
     from semantic_entry.core.ports.execution import CommandTransaction
+    from semantic_entry.core.ports.extraction import CommandExtractor
 
 
 def _receipt_handler(transaction: CommandTransaction) -> RecordReceiptHandler:
@@ -44,6 +46,7 @@ def _receipt_handler(transaction: CommandTransaction) -> RecordReceiptHandler:
 
 def build_warehouse_engine(
     uow_factory: Callable[[], UnitOfWork], authorizer: Authorizer, *, drafts: DraftStore,
+    extractor: CommandExtractor | None = None,
 ) -> Engine:
     registry = CommandRegistry()
     registry.register(RECORD_RECEIPT_SPEC)
@@ -58,6 +61,8 @@ def build_warehouse_engine(
     engine = Engine(
         catalog, preparer, queries, drafts,
         lambda: PostgresCommandTransaction(uow_factory()),
+        extractor=extractor,
     )
     engine.register_write(RECORD_RECEIPT_SPEC, ReceiptPreview, _receipt_handler)
+    engine.register_extraction(RECORD_RECEIPT_SPEC, ReceiptIntent)
     return engine

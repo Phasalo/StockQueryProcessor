@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from semantic_entry.core.commands.interpretation import CommandInterpreter
 from semantic_entry.core.commands.models import CommandModel
 from semantic_entry.core.drafts.manager import DraftManager
 from semantic_entry.core.executions.confirmation import CommandConfirmer
@@ -15,12 +16,14 @@ if TYPE_CHECKING:
 
     from semantic_entry.core.access import Actor
     from semantic_entry.core.commands.catalog import CommandCatalog
+    from semantic_entry.core.commands.extraction import ExtractionResult
     from semantic_entry.core.commands.models import CommandSpec
     from semantic_entry.core.commands.preparation import CommandPreparer
     from semantic_entry.core.commands.queries import QueryExecutor
     from semantic_entry.core.drafts.models import CommandDraft
     from semantic_entry.core.ports.drafts import DraftStore
     from semantic_entry.core.ports.execution import CommandTransaction, WriteHandler
+    from semantic_entry.core.ports.extraction import CommandExtractor
 
 InputT = TypeVar("InputT", bound=CommandModel)
 PreviewT = TypeVar("PreviewT", bound=CommandModel)
@@ -31,6 +34,7 @@ class Engine:
     def __init__(
         self, catalog: CommandCatalog, preparer: CommandPreparer, queries: QueryExecutor,
         drafts: DraftStore, transaction_factory: Callable[[], AbstractContextManager[CommandTransaction]],
+        *, extractor: CommandExtractor | None = None,
     ):
         self._catalog = catalog
         self._preparer = preparer
@@ -38,6 +42,13 @@ class Engine:
         self._drafts = drafts
         self._manager = DraftManager(preparer, drafts)
         self._confirmer = CommandConfirmer(catalog, drafts, transaction_factory)
+        self._interpreter = CommandInterpreter(catalog, extractor)
+
+    def register_extraction(self, spec: CommandSpec[Any, Any], input_model: type[CommandModel]) -> None:
+        self._interpreter.register(spec, input_model)
+
+    def interpret(self, text: str, actor: Actor) -> ExtractionResult:
+        return self._interpreter.interpret(text, actor)
 
     def register_write(
         self, spec: CommandSpec[InputT, ResultT], preview_model: type[PreviewT],

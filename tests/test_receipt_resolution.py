@@ -14,11 +14,17 @@ from psycopg2 import sql
 from psycopg2.extensions import parse_dsn
 from pydantic import ValidationError
 
+from app.bootstrap import build_engine
 from semantic_entry.adapters.memory.drafts import MemoryDraftStore
 from semantic_entry.adapters.postgres.config import PostgresConfig
 from semantic_entry.adapters.postgres.connection import create_connection
 from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 from semantic_entry.core.access import Actor, PermissionDeniedError
+from semantic_entry.core.commands.extraction import (
+    CommandCandidate,
+    ExtractionResult,
+    ExtractionStatus,
+)
 from semantic_entry.core.drafts.models import DraftState
 from semantic_entry.modules.warehouse.bootstrap import build_warehouse_engine
 from semantic_entry.modules.warehouse.models import MaterialRecord, SupplierRecord
@@ -276,6 +282,35 @@ class ReceiptResolutionPostgresTest(unittest.TestCase):
         self.assertEqual(revised.preparation.preview.brand, material.brand)
         self.assertEqual(revised.preparation.preview.supplier_name, supplier.name)
         self.assertEqual(self.counts()[2:], (0, 0, 0, 0, 0))
+
+    def test_extracted_intent_resolves_and_requires_separate_confirmation(self):
+        extractor = Mock()
+        extractor.extract.return_value = ExtractionResult(
+            status=ExtractionStatus.CANDIDATE,
+            candidate=CommandCandidate(
+                command_name="warehouse.record_receipt", command_version=1,
+                parameters={"material": self.material_lookup, "supplier_name": "Acme", "quantity_kg": "12.50", "actual_date": "2026-11-10"},
+            ),
+        )
+        engine = build_engine(self.config, self.authorizer, extractor=extractor)
+        before = self.counts()
+        candidate = engine.interpret("Пришло 12.50 кг BOPP Brand 1200 на 25 от Acme 10 ноября 2026", self.actor).candidate
+        parameters = candidate.parameters
+        references = engine.query(
+            "warehouse.resolve_receipt", 1,
+            {key: parameters[key] for key in ("material", "supplier_name")}, self.actor,
+        )
+        draft = engine.prepare(
+            candidate.command_name, candidate.command_version,
+            {**references.resolved_ids, "quantity_kg": parameters["quantity_kg"], "actual_date": parameters["actual_date"]},
+            self.actor, lifetime=timedelta(minutes=10),
+        )
+        self.assertEqual(draft.state, DraftState.READY)
+        self.assertEqual(draft.preparation.preview.parameters.material_id, self.material_id)
+        self.assertEqual(draft.preparation.preview.parameters.supplier_id, self.supplier_id)
+        self.assertEqual(self.counts(), before)
+        engine.confirm(draft.draft_id, draft.version, "from-text", self.actor)
+        self.assertEqual(self.counts()[2:], (1, 1, 1, 1, 1))
 
 
 if __name__ == "__main__":

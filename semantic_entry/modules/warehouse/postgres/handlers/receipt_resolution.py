@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
     from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
     from semantic_entry.core.access import Actor
+    from semantic_entry.modules.warehouse.models import MaterialLookup
     from semantic_entry.modules.warehouse.queries.receipt_resolution import (
-        MaterialLookup,
         ResolveReceiptInput,
     )
 

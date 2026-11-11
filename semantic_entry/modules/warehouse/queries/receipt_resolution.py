@@ -7,22 +7,15 @@ from pydantic import Field, StrictInt, StringConstraints, model_validator
 
 from semantic_entry.core.commands.models import CommandEffect, CommandModel, CommandSpec
 from semantic_entry.modules.warehouse.commands.receipts import RECORD_RECEIPT_SPEC
-from semantic_entry.modules.warehouse.models import MaterialRecord, SupplierRecord
+from semantic_entry.modules.warehouse.models import (
+    MaterialLookup,
+    MaterialRecord,
+    SupplierRecord,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Self
-
-
-class MaterialLookup(CommandModel):
-    film_type_code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)] | None = None
-    brand: str | None = Field(default=None, max_length=255)
-    format: StrictInt | None = Field(default=None, gt=0)
-    thickness: StrictInt | None = Field(default=None, gt=0)
-
-    @property
-    def has_criteria(self) -> bool:
-        return any(value is not None for value in (self.film_type_code, self.brand, self.format, self.thickness))
 
 
 class ResolveReceiptInput(CommandModel):

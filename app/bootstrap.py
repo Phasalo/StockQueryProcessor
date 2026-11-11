@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from semantic_entry.core.engine import Engine
     from semantic_entry.core.ports.authorization import Authorizer
     from semantic_entry.core.ports.drafts import DraftStore
+    from semantic_entry.core.ports.extraction import CommandExtractor
 
 
 def build_reports(config: PostgresConfig) -> WarehouseReports:
@@ -21,8 +22,10 @@ def build_reports(config: PostgresConfig) -> WarehouseReports:
 
 def build_engine(
     config: PostgresConfig, authorizer: Authorizer, *, drafts: DraftStore | None = None,
+    extractor: CommandExtractor | None = None,
 ) -> Engine:
     return build_warehouse_engine(
         partial(UnitOfWork, config), authorizer,
         drafts=drafts if drafts is not None else MemoryDraftStore(),
+        extractor=extractor,
     )
