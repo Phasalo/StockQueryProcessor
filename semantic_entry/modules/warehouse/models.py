@@ -38,10 +38,12 @@ class SupplierRecord:
 
 
 class MaterialLookup(CommandModel):
-    film_type_code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)] | None = None
-    brand: str | None = Field(default=None, max_length=255)
-    format: StrictInt | None = Field(default=None, gt=0)
-    thickness: StrictInt | None = Field(default=None, gt=0)
+    film_type_code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)] | None = Field(
+        default=None, description="Код типа плёнки, например BOPP или CPP. Тип плёнки и её марка — разные поля.",
+    )
+    brand: str | None = Field(default=None, max_length=255, description="Марка плёнки, отдельно от кода типа.")
+    format: StrictInt | None = Field(default=None, gt=0, description="Ширина плёнки в миллиметрах.")
+    thickness: StrictInt | None = Field(default=None, gt=0, description="Толщина плёнки в микрометрах.")
 
     @property
     def has_criteria(self) -> bool:

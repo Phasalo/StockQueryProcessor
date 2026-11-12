@@ -3,12 +3,16 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING
 
+from config import load_yandex_config
+from semantic_entry.adapters.llm.json_extractor import JsonCommandExtractor
+from semantic_entry.adapters.llm.yandex import YandexCompletionClient
 from semantic_entry.adapters.memory.drafts import MemoryDraftStore
 from semantic_entry.adapters.postgres.unit_of_work import UnitOfWork
 from semantic_entry.modules.warehouse.bootstrap import build_warehouse_engine
 from semantic_entry.modules.warehouse.reports import WarehouseReports
 
 if TYPE_CHECKING:
+    from semantic_entry.adapters.llm.yandex import YandexLlmConfig
     from semantic_entry.adapters.postgres.config import PostgresConfig
     from semantic_entry.core.engine import Engine
     from semantic_entry.core.ports.authorization import Authorizer
@@ -18,6 +22,11 @@ if TYPE_CHECKING:
 
 def build_reports(config: PostgresConfig) -> WarehouseReports:
     return WarehouseReports(partial(UnitOfWork, config))
+
+
+def build_yandex_extractor(config: YandexLlmConfig | None = None) -> JsonCommandExtractor:
+    settings = config if config is not None else load_yandex_config()
+    return JsonCommandExtractor(YandexCompletionClient(settings).complete)
 
 
 def build_engine(
